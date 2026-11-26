@@ -32,23 +32,15 @@ jobs:
           git -C /tmp/UxPlay checkout -q "$UXPLAY_COMMIT"
           python receiver/patch_uxplay.py /tmp/UxPlay
           cmake -S /tmp/UxPlay -B /tmp/UxPlay/build -G Ninja && ninja -C /tmp/UxPlay/build
-      - run: pip install -q pyserial zeroconf ifaddr playwright
-      - name: Unit tests (firmware twin, tap accuracy, protocol, core)
+      - run: pip install -q zeroconf ifaddr playwright
+      - name: Unit tests
         run: python tests/test_all.py
-      - name: Input-capture logic
-        run: python tests/test_capture_logic.py
       - name: Discovery end-to-end (announce -> browse like an iPhone -> GET /info)
         run: python tests/test_discovery.py /tmp/UxPlay/build/uxplay
       - name: UI screenshots
         run: python tests/ui_shots.py "$(which google-chrome)" shots
       - uses: actions/upload-artifact@v4
         with: { name: ui-screenshots, path: shots/ }
-      - uses: actions/cache@v4
-        with:
-          path: ~/.platformio
-          key: pio-${{ hashFiles('firmware/platformio.ini') }}
-      - name: Firmware builds (ESP32, S3, C3)
-        run: pip install -q platformio && cd firmware && pio run
 
   windows:
     name: Windows build, tests and installer
@@ -118,26 +110,60 @@ jobs:
         run: python packaging/verify_receiver.py dist-receiver
 
       - name: Unit tests on Windows
-        run: |
-          $env:PATH = "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin;$env:PATH"
-          python tests/test_all.py
-          python tests/test_capture_logic.py
+        run: python tests/test_all.py
 
-      - name: Discovery end-to-end on Windows
+      - name: Discovery end-to-end on Windows (no Bonjour, zeroconf path)
         run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
-
-      - name: Built-in Bluetooth (WinRT HID over GATT) smoke test
-        run: python packaging/smoke_ble.py
 
       - name: PyInstaller
         run: pyinstaller --noconfirm --distpath dist --workpath build/pyi packaging/imirror.spec
 
-      - name: Self-test of the built app (window + JS bridge + core)
+      - name: Self-test of the built app without Bonjour (starts receiver, must be announced)
+        env:
+          IMIRROR_SELFTEST_REQUIRE_MDNS: "1"
         run: |
+          $env:APPDATA = "$PWD\appdata1"; $env:LOCALAPPDATA = "$PWD\appdata1"
+          New-Item -ItemType Directory -Force appdata1 | Out-Null
+          Copy-Item -Recurse dist-receiver dist/iMirror/receiver
           $p = Start-Process dist/iMirror/iMirror.exe -ArgumentList "--selftest" -WorkingDirectory $PWD -PassThru
-          if (-not $p.WaitForExit(150000)) { Stop-Process $p -Force; throw "self-test timed out" }
+          if (-not $p.WaitForExit(180000)) { Stop-Process $p -Force; throw "self-test timed out" }
           Get-Content selftest-result.json
+          Get-Content appdata1\iMirror\imirror.log -Tail 40
           if ($p.ExitCode -ne 0) { throw "self-test failed ($($p.ExitCode))" }
+          Remove-Item -Recurse dist/iMirror/receiver
+
+      - name: Install Apple Bonjour (the user's setup)
+        run: |
+          Invoke-WebRequest -UseBasicParsing "https://download.info.apple.com/Mac_OS_X/061-8098.20100603.gthyu/BonjourPSSetup.exe" -OutFile BonjourPSSetup.exe
+          $i = Start-Process .\BonjourPSSetup.exe -ArgumentList "/quiet","/norestart" -PassThru -Wait
+          "Bonjour installer exit: $($i.ExitCode)"
+          sc.exe query "Bonjour Service"
+          Test-Path "$env:SystemRoot\System32\dnssd.dll"
+          Get-Command dns-sd -ErrorAction SilentlyContinue | Format-List Source
+
+      - name: Diagnostic - zeroconf while Bonjour owns port 5353
+        continue-on-error: true
+        timeout-minutes: 3
+        env:
+          IMIRROR_MDNS_METHOD: zeroconf
+        run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
+
+      - name: Discovery end-to-end with Bonjour (as on the user's PC)
+        run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
+
+      - name: Self-test of the built app with Bonjour
+        env:
+          IMIRROR_SELFTEST_REQUIRE_MDNS: "1"
+        run: |
+          $env:APPDATA = "$PWD\appdata2"; $env:LOCALAPPDATA = "$PWD\appdata2"
+          New-Item -ItemType Directory -Force appdata2 | Out-Null
+          Copy-Item -Recurse dist-receiver dist/iMirror/receiver
+          $p = Start-Process dist/iMirror/iMirror.exe -ArgumentList "--selftest" -WorkingDirectory $PWD -PassThru
+          if (-not $p.WaitForExit(180000)) { Stop-Process $p -Force; throw "self-test timed out" }
+          Get-Content selftest-result.json
+          Get-Content appdata2\iMirror\imirror.log -Tail 40
+          if ($p.ExitCode -ne 0) { throw "self-test failed ($($p.ExitCode))" }
+          Remove-Item -Recurse dist/iMirror/receiver
 
       - name: Installer (Inno Setup)
         run: |
@@ -153,7 +179,7 @@ jobs:
           $i = Start-Process $setup -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-" -PassThru -Wait
           if ($i.ExitCode -ne 0) { throw "installer exit $($i.ExitCode)" }
           $app = "$env:ProgramFiles\iMirror"
-          foreach ($f in "iMirror.exe", "receiver\bin\uxplay.exe", "receiver\lib\gstreamer-1.0\libgstd3d11.dll", "firmware_bin\imirror-esp32.bin") {
+          foreach ($f in "iMirror.exe", "receiver\bin\uxplay.exe", "receiver\lib\gstreamer-1.0\libgstd3d11.dll") {
             if (-not (Test-Path "$app\$f")) { throw "missing after install: $f" }
           }
           netsh advfirewall firewall show rule name="iMirror AirPlay" | Select-String "Enabled|Program"
@@ -167,7 +193,7 @@ jobs:
         if: always()
         run: |
           New-Item -ItemType Directory -Force applogs | Out-Null
-          Copy-Item "$env:LOCALAPPDATA\iMirror\*.log", "$env:LOCALAPPDATA\iMirror\stacks.txt" applogs -ErrorAction SilentlyContinue
+          Copy-Item "$env:LOCALAPPDATA\iMirror\*.log", "$env:LOCALAPPDATA\iMirror\stacks.txt", "appdata1\iMirror\*", "appdata2\iMirror\*" applogs -ErrorAction SilentlyContinue
           Get-ChildItem applogs | ForEach-Object { "== $($_.Name)"; Get-Content $_.FullName -Tail 80 }
       - uses: actions/upload-artifact@v4
         if: always()

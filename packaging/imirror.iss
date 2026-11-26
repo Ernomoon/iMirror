@@ -34,11 +34,11 @@ Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Ярлык на рабочем столе"; GroupDescription: "Дополнительно:"
+Name: "bonjour"; Description: "Установить Apple Bonjour (рекомендуется: iPhone надёжнее находит компьютер)"; GroupDescription: "Дополнительно:"; Check: not BonjourInstalled
 
 [Files]
 Source: "..\dist\iMirror\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\dist-receiver\*"; DestDir: "{app}\receiver"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "..\firmware_bin\*.bin"; DestDir: "{app}\firmware_bin"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\iMirror"; Filename: "{app}\iMirror.exe"
@@ -72,10 +72,30 @@ begin
             (RegQueryStringValue(HKCU, WebView2UserKey, 'pv', v) and (v <> '') and (v <> '0.0.0.0'));
 end;
 
+function BonjourInstalled: Boolean;
+begin
+  Result := FileExists(ExpandConstant('{sys}\dnssd.dll'));
+end;
+
+procedure InstallBonjour;
+var
+  code: Integer;
+begin
+  WizardForm.StatusLabel.Caption := 'Установка Apple Bonjour...';
+  try
+    DownloadTemporaryFile('https://download.info.apple.com/Mac_OS_X/061-8098.20100603.gthyu/BonjourPSSetup.exe', 'BonjourPSSetup.exe', '7f1ec347cd429cfb25a34b2147e02231334f28290e0c28be213415b0f99da1a0', nil);
+    Exec(ExpandConstant('{tmp}\BonjourPSSetup.exe'), '/quiet /norestart', '', SW_HIDE, ewWaitUntilTerminated, code);
+  except
+    MsgBox('Не удалось скачать Apple Bonjour. iMirror будет объявлять себя сам; Bonjour можно установить позже из окна «Проверка».', mbInformation, MB_OK);
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   code: Integer;
 begin
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('bonjour') then
+    InstallBonjour;
   if (CurStep = ssPostInstall) and not WebView2Installed then
   begin
     WizardForm.StatusLabel.Caption := 'Установка Microsoft Edge WebView2 (нужен для окна iMirror)...';

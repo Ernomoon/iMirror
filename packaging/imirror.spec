@@ -5,8 +5,8 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 ROOT = SPECPATH + "/.."
 datas = [(ROOT + "/app/imirror/ui", "imirror/ui")]
 binaries = []
-hiddenimports = collect_submodules("zeroconf") + ["ifaddr", "serial.tools.list_ports", "esptool"]
-for pkg in ("webview", "winrt", "clr_loader", "pythonnet", "esptool"):
+hiddenimports = collect_submodules("zeroconf") + ["ifaddr"]
+for pkg in ("webview", "clr_loader", "pythonnet"):
     try:
         d, b, h = collect_all(pkg)
         datas += d; binaries += b; hiddenimports += h

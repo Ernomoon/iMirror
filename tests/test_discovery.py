@@ -64,8 +64,24 @@ def main(uxplay):
     threading.Thread(target=pump, daemon=True).start()
 
     try:
-        assert ready.wait(15), "uxplay printed no IMIRROR_MDNS lines"
+        assert ready.wait(40), "no announcement result"
         assert events[-1][1].get("ok"), events
+        method = events[-1][1].get("method")
+        print("announced via", method, events[-1][1].get("addresses"))
+        if method == "bonjour":
+            # verify with Apple's own browser, then the server answers
+            port = adv.port
+            p = subprocess.Popen(["dns-sd", "-B", "_airplay._tcp", "local"], stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT)
+            time.sleep(5)
+            p.kill()
+            out = p.stdout.read().decode("utf-8", "replace")
+            print("dns-sd -B:\n" + out)
+            assert "iMirror Test" in out, "Bonjour browse does not see the service"
+            status, body = http_get_info("127.0.0.1", port)
+            assert b"200" in status, status
+            print("DISCOVERY E2E OK (bonjour)")
+            return
         found = {}
         got = threading.Event()
 

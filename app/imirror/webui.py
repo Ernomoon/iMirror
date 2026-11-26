@@ -129,12 +129,19 @@ class Host:
         try:
             if ok:
                 result["js"] = self.window.evaluate_js("JSON.stringify({pages: document.querySelectorAll('[data-page]').length, title: document.title, rendered: !!window.__imirror && window.__imirror.rendered})")
+                # the real path the user takes: start the receiver and wait for the announcement
+                self.core.dispatch("start")
+                t0 = time.monotonic()
+                while time.monotonic() - t0 < 40 and self.core.mdns.get("ok") is None:
+                    time.sleep(0.5)
                 st = self.core.state()
-                result["transport"] = st["hid"]["transport"]
-                result["ble_available"] = st["hid"]["ble_available"]
-                time.sleep(4)          # let BLE init report its status
-                result["hid_error"] = self.core.state()["hid"]["error"]
-                result["hid_ready"] = self.core.state()["hid"]["ready"]
+                result["phase"] = st["phase"]
+                result["mdns"] = st["mdns"]
+                result["receiver_running"] = st["receiver"]["running"]
+                time.sleep(3)
+                result["checks"] = [(c["id"], c["state"], c["detail"]) for c in self.core.state()["checks"]]
+                if os.environ.get("IMIRROR_SELFTEST_REQUIRE_MDNS") and not st["mdns"].get("ok"):
+                    result["error"] = "announcement failed: " + str(st["mdns"])
                 shot = Path.cwd() / "selftest-ui.png"
                 try:
                     from PIL import ImageGrab

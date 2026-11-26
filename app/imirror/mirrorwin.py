@@ -5,7 +5,6 @@ import ctypes
 from ctypes import wintypes as W
 
 from . import win32 as U
-from .calib import Rect, fit_rect
 
 
 def find_window_for_pid(pid: int):
@@ -30,39 +29,6 @@ def find_window_for_pid(pid: int):
         return None
     found.sort(key=lambda t: t[0], reverse=True)
     return found[0][1]
-
-
-def client_rect_screen(hwnd) -> Rect | None:
-    if not hwnd or not U.IsWindow(hwnd):
-        return None
-    r = U.RECT()
-    if not U.GetClientRect(hwnd, ctypes.byref(r)):
-        return None
-    p = U.POINT(0, 0)
-    U.ClientToScreen(hwnd, ctypes.byref(p))
-    return Rect(p.x, p.y, r.right - r.left, r.bottom - r.top)
-
-
-def video_rect(hwnd, src_w: int, src_h: int) -> Rect | None:
-    c = client_rect_screen(hwnd)
-    if c is None or c.w <= 0 or c.h <= 0:
-        return None
-    return fit_rect(c.x, c.y, c.w, c.h, src_w, src_h)
-
-
-def window_under(px: int, py: int):
-    h = U.WindowFromPoint(U.POINT(px, py))
-    if not h:
-        return None
-    return U.GetAncestor(h, U.GA_ROOT)
-
-
-def same_hwnd(a, b) -> bool:
-    if not a or not b:
-        return False
-    va = a if isinstance(a, int) else ctypes.cast(a, ctypes.c_void_p).value
-    vb = b if isinstance(b, int) else ctypes.cast(b, ctypes.c_void_p).value
-    return va == vb
 
 
 def _monitor_rects(hwnd):
