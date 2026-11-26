@@ -46,7 +46,7 @@ iPhone ──AirPlay (Wi-Fi)──▶ UxPlay (GStreamer, аппаратное д
 
 ### Тесты
 ```
-python tests/test_all.py                    # протокол, прошивка и её Python-двойник, точность тапа, ядро
+python tests/test_all.py                    # приёмник, объявление в сети, ядро
 python tests/test_discovery.py <uxplay>     # объявление → поиск как iPhone → GET /info
 python tests/ui_shots.py <chrome> shots     # снимки интерфейса во всех состояниях
 ```
