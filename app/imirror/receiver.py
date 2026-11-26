@@ -38,10 +38,10 @@ def _ports_free(tcp, udp) -> bool:
         for p in ports:
             s = socket.socket(socket.AF_INET, kind)
             try:
-                if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
-                    s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
                 s.bind(("0.0.0.0", p))
-            except OSError:
+            except OSError as e:
+                import logging
+                logging.getLogger("imirror").info("port %s/%s busy: %s", "tcp" if kind == socket.SOCK_STREAM else "udp", p, e)
                 return False
             finally:
                 s.close()
@@ -240,18 +240,29 @@ class Receiver:
         self.stage = ""                       # "", "register", "ready"
         self.stopping = False                 # stop() was requested by iMirror itself
         self.started_at = 0.0
+        self._lock = threading.Lock()
+        self._starting = False
 
     @property
     def running(self) -> bool:
-        return self.proc is not None and self.proc.poll() is None
+        return self._starting or (self.proc is not None and self.proc.poll() is None)
 
     @property
     def pid(self) -> int | None:
         return self.proc.pid if self.running else None
 
     def start(self, cfg: dict):
-        if self.running:
-            return
+        """Start UxPlay. Concurrent calls (autostart + a click) never start a second process."""
+        with self._lock:
+            if self.running:
+                return
+            self._starting = True
+        try:
+            self._start(cfg)
+        finally:
+            self._starting = False
+
+    def _start(self, cfg: dict):
         exe = find_uxplay(cfg)
         if not exe:
             raise FileNotFoundError("uxplay.exe не найден. Запустите install.ps1 (он собирает приёмник) "
@@ -273,6 +284,7 @@ class Receiver:
             env=env, creationflags=flags)
         if sys.platform == "win32":
             _raise_priority(self.proc)
+            _kill_with_parent(self.proc)
         self._reader = threading.Thread(target=self._read, args=(self.proc,), daemon=True)
         self._reader.start()
         self.on_event("state", "running")
@@ -324,6 +336,52 @@ class Receiver:
                 proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+
+_JOB = None
+
+
+def _kill_with_parent(proc):
+    """Put UxPlay in a job object that closes with iMirror: no orphaned receiver holding the
+    AirPlay ports if iMirror crashes or is killed."""
+    global _JOB
+    try:
+        import ctypes
+        from ctypes import wintypes as W
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateJobObjectW.restype = W.HANDLE
+        k32.OpenProcess.restype = W.HANDLE
+        k32.OpenProcess.argtypes = [W.DWORD, W.BOOL, W.DWORD]
+        k32.SetInformationJobObject.argtypes = [W.HANDLE, ctypes.c_int, ctypes.c_void_p, W.DWORD]
+        k32.AssignProcessToJobObject.argtypes = [W.HANDLE, W.HANDLE]
+        k32.CloseHandle.argtypes = [W.HANDLE]
+
+        class BASIC(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", W.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", W.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", W.DWORD), ("SchedulingClass", W.DWORD)]
+
+        class IO(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_uint64) for n in ("r", "w", "o", "rb", "wb", "ob")]
+
+        class EXT(ctypes.Structure):
+            _fields_ = [("Basic", BASIC), ("Io", IO), ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+        if _JOB is None:
+            job = k32.CreateJobObjectW(None, None)
+            info = EXT()
+            info.Basic.LimitFlags = 0x2000          # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+                return
+            _JOB = job
+        h = k32.OpenProcess(0x0001 | 0x0100, False, proc.pid)      # PROCESS_TERMINATE | SET_QUOTA
+        if h:
+            k32.AssignProcessToJobObject(_JOB, h)
+            k32.CloseHandle(h)
+    except Exception:
+        pass
 
 
 def _raise_priority(proc):
