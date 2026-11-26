@@ -31,6 +31,33 @@ def find_window_for_pid(pid: int):
     return found[0][1]
 
 
+def client_rect_screen(hwnd):
+    """(x, y, w, h) of the client area in screen coordinates."""
+    if not hwnd or not U.IsWindow(hwnd):
+        return None
+    r = U.RECT()
+    if not U.GetClientRect(hwnd, ctypes.byref(r)):
+        return None
+    p = U.POINT(0, 0)
+    U.ClientToScreen(hwnd, ctypes.byref(p))
+    return (p.x, p.y, r.right - r.left, r.bottom - r.top)
+
+
+def window_under(px: int, py: int):
+    h = U.WindowFromPoint(U.POINT(px, py))
+    if not h:
+        return None
+    return U.GetAncestor(h, U.GA_ROOT)
+
+
+def same_hwnd(a, b) -> bool:
+    if not a or not b:
+        return False
+    va = a if isinstance(a, int) else ctypes.cast(a, ctypes.c_void_p).value
+    vb = b if isinstance(b, int) else ctypes.cast(b, ctypes.c_void_p).value
+    return va == vb
+
+
 def _monitor_rects(hwnd):
     mon = U.MonitorFromWindow(hwnd, U.MONITOR_DEFAULTTONEAREST)
     mi = U.MONITORINFO()

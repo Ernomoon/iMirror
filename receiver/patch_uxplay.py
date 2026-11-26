@@ -6,6 +6,8 @@ iMirror reads these lines to show the REAL stream parameters that the iPhone sen
   IMIRROR_STATS fps=59.9 kbps=24500 frames=60     (once per second while video flows)
   IMIRROR_CONN open=1                              (connection count changes)
   IMIRROR_MDNS type=_airplay._tcp port=7000 name=... txt=<hex>   (with IMIRROR_EXTERNAL_MDNS=1)
+  IMIRROR_STAGE register / IMIRROR_STAGE ready     (start-up progress, for diagnosing hangs)
+stdout is made unbuffered so the last line before any crash always reaches iMirror's log.
 
 Usage: python patch_uxplay.py <path-to-UxPlay-source>
 The patch is idempotent: running it twice does nothing the second time.
@@ -65,7 +67,7 @@ static int imirror_external_mdns(const char *type, const char *full_name, unsign
                                  const mdnsd_txt_t *txt) {
     if (!getenv("IMIRROR_EXTERNAL_MDNS")) return 0;
     printf("IMIRROR_MDNS type=%s port=%u name=%s txt=", type, (unsigned) port, full_name);
-    for (int i = 0; i < txt->length; i++) printf("%02x", (unsigned) txt->bytes[i]);
+    for (int i = 0; i < txt->length; i++) printf("%02x", (unsigned) (unsigned char) txt->bytes[i]);
     printf("\n");
     fflush(stdout);
     return 1;
@@ -113,12 +115,26 @@ def main() -> None:
 
     src = replace_once(
         src,
+        "extern \"C\" int video_set_codec(void *cls, video_codec_t codec) {\n",
+        "static const char *imirror_codec = \"h264\";  /* IMIRROR */\n"
+        "extern \"C\" int video_set_codec(void *cls, video_codec_t codec) {\n",
+        "codec variable")
+
+    src = replace_once(
+        src,
         "    bool video_is_h265 = (codec == VIDEO_CODEC_H265);\n    if (mux_to_file) {",
         "    bool video_is_h265 = (codec == VIDEO_CODEC_H265);\n"
-        "    printf(\"IMIRROR_VIDEO codec=%s w=%u h=%u\\n\", video_is_h265 ? \"h265\" : \"h264\",\n"
-        "           (unsigned) width_source, (unsigned) height_source);\n"
-        "    fflush(stdout);\n"
+        "    imirror_codec = video_is_h265 ? \"h265\" : \"h264\";\n"
         "    if (mux_to_file) {",
+        "codec report")
+
+    src = replace_once(
+        src,
+        "extern \"C\" void video_report_size(void *cls, float *width_source, float *height_source, float *width, float *height) {\n",
+        "extern \"C\" void video_report_size(void *cls, float *width_source, float *height_source, float *width, float *height) {\n"
+        "    printf(\"IMIRROR_VIDEO codec=%s w=%u h=%u\\n\", imirror_codec,\n"
+        "           (unsigned) *width_source, (unsigned) *height_source);\n"
+        "    fflush(stdout);\n",
         "resolution report")
 
     src = replace_once(
@@ -134,6 +150,22 @@ def main() -> None:
         "    open_connections--;\n    LOGD(\"Open connections: %i\", open_connections);\n"
         "    printf(\"IMIRROR_CONN open=%u\\n\", open_connections); fflush(stdout);\n",
         "disconnect report")
+
+    src = replace_once(
+        src,
+        "#else\nint main (int argc, char *argv[]) {\n#endif\n",
+        "#else\nint main (int argc, char *argv[]) {\n#endif\n"
+        "    setvbuf(stdout, NULL, _IONBF, 0);  /* IMIRROR: never lose the last lines */\n"
+        "    setvbuf(stderr, NULL, _IONBF, 0);\n",
+        "unbuffered stdout")
+
+    src = replace_once(
+        src,
+        "    if (register_dnssd()) {\n",
+        "    printf(\"IMIRROR_STAGE register\\n\"); fflush(stdout);\n"
+        "    if (register_dnssd()) {\n"
+        "        printf(\"IMIRROR_STAGE register_failed\\n\"); fflush(stdout);\n",
+        "register stage")
 
     path.write_text(src, encoding="utf-8", newline="\n")
     print("[patch_uxplay] patched", path)

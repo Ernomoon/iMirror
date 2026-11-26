@@ -38,6 +38,8 @@
           <div class="radar" aria-hidden="true"></div>
           <div class="rings" aria-hidden="true"><i></i><i></i><i></i></div>
           <div class="scan" aria-hidden="true"></div>
+          <div class="bt-waves" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="pointer" aria-hidden="true"></div>
           <div class="flash" aria-hidden="true"></div>
           <div class="scr-stack">
             <div class="scr" data-for="off">
@@ -81,6 +83,7 @@
     <nav class="seg" id="nav" role="tablist">
       <i class="thumb" aria-hidden="true"></i>
       <button role="tab" data-nav="home" class="on">Главная</button>
+      <button role="tab" data-nav="control">Управление</button>
       <button role="tab" data-nav="settings">Настройки</button>
     </nav>
 
@@ -94,6 +97,17 @@
           <button class="cta magnetic" id="cta"><span class="cta-label" data-bind="cta">Запустить</span></button>
           <button class="ghost magnetic" data-act="fit" data-live>Подогнать окно</button>
           <button class="ghost magnetic" data-act="fullscreen" data-live>Во весь экран</button>
+        </div>
+
+        <div class="card fault" id="fault" hidden>
+          <div class="fault-head"><span class="fault-ic"><svg viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.2"/></svg></span>
+            <div><h2 data-bind="faultTitle"></h2><p data-bind="faultDetail"></p></div></div>
+          <pre class="tail" id="faultTail"></pre>
+          <div class="fault-actions">
+            <button class="fix magnetic" id="faultRetry">Попробовать снова</button>
+            <button class="ghost magnetic" data-act="safe_start">Безопасный режим</button>
+            <button class="link" data-act="dismiss">Скрыть</button>
+          </div>
         </div>
 
         <div class="card stats" id="stats">
@@ -120,6 +134,47 @@
         <div class="card checks">
           <div class="card-head"><h2>Проверка</h2><button class="link" data-act="check" id="recheck">Проверить снова</button></div>
           <ul class="check-list" id="checks"></ul>
+        </div>
+      </article>
+
+      <!-- ---------------- Управление ---------------- -->
+      <article class="page" data-page="control">
+        <h1 class="headline small">Управление iPhone</h1>
+        <p class="sub">Компьютер становится Bluetooth-мышью и клавиатурой для iPhone. Без проводов и дополнительных устройств.</p>
+
+        <div class="card bt" id="bt">
+          <div class="bt-core"><div class="bt-orb"><svg viewBox="0 0 24 24"><path d="M7 7l10 10-5 4V3l5 4L7 17"/></svg></div></div>
+          <div class="bt-text"><h2 data-bind="btTitle">Выключено</h2><p data-bind="btDetail"></p></div>
+          <button class="cta small magnetic" id="btToggle"><span data-bind="btCta">Включить</span></button>
+        </div>
+
+        <div class="card pair" id="pair">
+          <h2>Один раз: подключите iPhone</h2>
+          <ol class="steps">
+            <li data-step="1"><div class="step-art"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="22"/><path d="M26 22l12 12-6 5V17l6 5-12 12"/></svg></div>
+              <b>Настройки → Bluetooth</b><em>В «Других устройствах» выберите этот компьютер и подтвердите связь</em></li>
+            <li data-step="2"><div class="step-art"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="22"/><circle cx="32" cy="32" r="9"/><circle class="dot" cx="32" cy="32" r="3"/></svg></div>
+              <b>Включите AssistiveTouch</b><em>Настройки → Универсальный доступ → Касание → AssistiveTouch. Тогда появится указатель</em></li>
+            <li data-step="3"><div class="step-art"><svg viewBox="0 0 64 64"><rect x="8" y="12" width="48" height="34" rx="6"/><path d="M26 52h12M32 46v6"/><path class="swipe" d="M22 30l8 8 12-14"/></svg></div>
+              <b>Нажмите «Взять мышь»</b><em>Или щёлкните по окну с экраном iPhone. Вернуть мышь компьютеру: правый Ctrl</em></li>
+          </ol>
+        </div>
+
+        <div class="card pad" id="pad">
+          <button class="capture magnetic" id="captureBtn"><span class="cap-glow"></span><b data-bind="capTitle">Взять мышь и клавиатуру</b><em data-bind="capSub">Правый Ctrl возвращает их компьютеру</em></button>
+          <div class="keys">
+            <button class="key magnetic" data-ctl="home"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="4"/></svg><span>Домой</span></button>
+            <button class="key magnetic" data-ctl="switcher"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="8" height="12" rx="2"/><rect x="13" y="6" width="8" height="12" rx="2"/></svg><span>Приложения</span></button>
+            <button class="key magnetic" data-ctl="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><span>Поиск</span></button>
+            <button class="key magnetic" data-ctl="media" data-key="vol_down"><svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10z"/><path d="M17 12h4"/></svg><span>Тише</span></button>
+            <button class="key magnetic" data-ctl="media" data-key="vol_up"><svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10z"/><path d="M17 12h4M19 10v4"/></svg><span>Громче</span></button>
+            <button class="key magnetic" data-ctl="media" data-key="play"><svg viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></svg><span>Пауза</span></button>
+            <button class="key magnetic" data-ctl="media" data-key="lock"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span>Блокировка</span></button>
+          </div>
+          <div class="typer">
+            <textarea id="typeText" rows="2" placeholder="Текст, который нужно напечатать на iPhone"></textarea>
+            <button class="ghost magnetic" id="typeBtn">Напечатать</button>
+          </div>
         </div>
       </article>
 
@@ -171,6 +226,8 @@
   </section>
 </main>
 
+<div class="captured-frame" aria-hidden="true"><span>Мышь и клавиатура сейчас у iPhone. Правый Ctrl вернёт их компьютеру</span></div>
+<div class="cursor-glow" aria-hidden="true"></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <script src="app.js"></script>
 </body>

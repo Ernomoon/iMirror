@@ -25,6 +25,10 @@ else:
 log = logging.getLogger("imirror")
 
 
+METHOD_TITLES = {"native": "встроенной службой Windows", "bonjour": "через Bonjour",
+                 "zeroconf": "собственным объявлением"}
+
+
 class Core:
     def __init__(self, on_change=None):
         self.cfg = C.load()
@@ -38,6 +42,15 @@ class Core:
         self.mdns = {"ok": None, "addresses": [], "error": "", "method": ""}
         self.receiver = Receiver(lambda k, v: self._event(k, v), line_hook=self.advertiser.feed)
         self.wifi = netdiag.WifiStreaming()
+        self.control = None
+        if IS_WIN:
+            try:
+                from .control import Control
+                self.control = Control(self.on_change, self.logln, lambda: self.mirror_hwnd)
+                if self.cfg.get("control_enabled"):
+                    threading.Timer(1.5, lambda: self.dispatch("control", {"op": "on"})).start()
+            except Exception as e:
+                log.warning("control unavailable: %r", e)
         self.checks: list = []
         self.checking = False
         self._last_check = 0.0
@@ -46,6 +59,9 @@ class Core:
         self.fullscreen = mirrorwin.FullscreenToggler() if IS_WIN else None
         self.fps_hist = collections.deque([0.0] * 60, maxlen=60)
         self.connected_since = 0.0
+        self.fault: dict | None = None          # why the receiver is not usable right now
+        self._safe_mode = False
+        self._start_gen = 0
         self._stop = threading.Event()
         threading.Thread(target=self._tracker, name="iMirror-tracker", daemon=True).start()
         self.run_checks()
@@ -78,7 +94,7 @@ class Core:
     def phase(self) -> str:
         r = self.receiver
         if not r.running:
-            return "off"
+            return "problem" if self.fault else "off"
         if r.info.connections > 0 and r.info.width:
             return "live"
         if r.info.connections > 0:
@@ -109,6 +125,9 @@ class Core:
                 "since": self.connected_since,
             },
             "mdns": self.mdns,
+            "fault": self.fault,
+            "safe_mode": self._safe_mode,
+            "control": self.control.state() if self.control else None,
             "checks": self.checks,
             "checking": self.checking,
             "log": list(self.log)[-200:],
@@ -144,15 +163,70 @@ class Core:
         self.save()
         return {"ok": True}
 
-    def act_start(self):
+    STARTUP_LIMIT = 15.0       # seconds until the receiver must be announced
+
+    def act_start(self, safe: bool = False):
         if self.receiver.running:
             return {"ok": True}
+        self.fault = None
+        self._safe_mode = bool(safe)
         self.mdns = {"ok": None, "addresses": [], "error": "", "method": ""}
-        self.receiver.start(self.cfg)
+        cfg = dict(self.cfg)
+        if safe:       # the most compatible pipeline: no audio, generic sink, 1080p H.264
+            cfg.update(audio=False, video_sink="autovideosink", h265=False, width=1920, height=1080,
+                       software_decode=True)
+            self.logln("Безопасный режим: 1080p H.264, без звука, программное декодирование")
+        self.receiver.start(cfg)
+        if cfg.get("device_id") != self.cfg.get("device_id"):
+            self.cfg["device_id"] = cfg["device_id"]
+            self.save()
+        self._start_gen += 1
+        gen = self._start_gen
+        threading.Timer(self.STARTUP_LIMIT, lambda: self._startup_watchdog(gen)).start()
         threading.Timer(6.0, self.run_checks).start()
         return {"ok": True}
 
+    def act_safe_start(self):
+        self.act_stop()
+        time.sleep(0.5)
+        return self.act_start(safe=True)
+
+    def _tail(self, n=12):
+        return [l for l in list(self.receiver.tail)[-n:] if l.strip()]
+
+    def _startup_watchdog(self, gen):
+        """Never stay in "starting" forever: explain what is stuck."""
+        if gen != self._start_gen or not self.receiver.running or self.mdns.get("ok") is not None:
+            return
+        stage = self.receiver.stage
+        tail = self._tail()
+        log.error("startup watchdog: stage=%r, last output:\n%s", stage, "\n".join(tail))
+        if stage in ("register", "ready"):
+            self.fault = {"title": "Не получилось объявить компьютер в сети",
+                          "detail": "Приёмник работает, но объявление в сети не ответило за "
+                                    f"{int(self.STARTUP_LIMIT)} с. Нажмите «Повторить» или проверьте сеть ниже.",
+                          "tail": tail, "action": "reannounce"}
+            self.mdns = {"ok": False, "addresses": [], "error": "объявление не ответило", "method": ""}
+            self.advertiser.restart()
+        else:
+            self.receiver.stop()
+            if not self._safe_mode:
+                self.logln("Приёмник не запустился за 15 с, пробую безопасный режим")
+                self.act_start(safe=True)
+                return
+            self.fault = {"title": "Приёмник AirPlay не запускается",
+                          "detail": "UxPlay завис при запуске даже в безопасном режиме. "
+                                    "Последние строки его вывода — ниже и в журнале.",
+                          "tail": tail, "action": "start"}
+        self.on_change()
+
+    def act_dismiss(self):
+        self.fault = None
+        return {"ok": True}
+
     def act_stop(self):
+        self._start_gen += 1
+        self.fault = None
         self.receiver.stop()
         self.advertiser.stop()
         self.mdns = {"ok": None, "addresses": [], "error": "", "method": ""}
@@ -189,6 +263,16 @@ class Core:
         return {"ok": True}
 
     def act_fix(self, fix: str, arg: str = ""):
+        last = getattr(self, "_fix_times", {})
+        self._fix_times = last
+        if time.monotonic() - last.get(fix, -1e9) < 20:
+            return {"ok": True, "pending": True}       # a UAC prompt for this fix is already open
+        last[fix] = time.monotonic()
+        if fix == "reannounce":
+            self.advertiser.restart()
+            return {"ok": True}
+        if fix == "start":
+            return self.act_start()
         app, ux = self._paths()
         if not netdiag.apply_fix(fix, arg, app, ux):
             raise ValueError("Windows не дала запустить исправление (нужно подтвердить запрос администратора)")
@@ -231,7 +315,8 @@ class Core:
         self.mdns = {"ok": val.get("ok"), "addresses": val.get("addresses", []),
                      "error": val.get("error", ""), "method": val.get("method", "")}
         if val.get("ok"):
-            how = "через Bonjour" if val.get("method") == "bonjour" else "собственным объявлением"
+            self.fault = None
+            how = METHOD_TITLES.get(val.get("method"), "собственным объявлением")
             self.logln(f"Объявлено в сети {how}: " + ", ".join(val.get("addresses", [])))
         else:
             self.toast("Не удалось объявить приёмник в сети: " + val.get("error", ""), "error")
@@ -241,6 +326,12 @@ class Core:
     def _event(self, kind, val):
         if kind == "log":
             self.logln(val)
+        elif kind == "stage":
+            log.info("receiver stage: %s", val)
+            if val == "register_failed":
+                self.fault = {"title": "Приёмник не смог зарегистрироваться",
+                              "detail": "UxPlay сообщил об ошибке регистрации службы AirPlay.",
+                              "tail": self._tail(), "action": "start"}
         elif kind == "stats":
             self.fps_hist.append(val.fps)
         elif kind == "video":
@@ -263,11 +354,28 @@ class Core:
                 self.advertiser.stop()
                 self.mdns = {"ok": None, "addresses": [], "error": "", "method": ""}
                 self.wifi.enable(False)
-                if code not in ("0", "1", "-15", "15"):
-                    self.toast(f"Приёмник завершился с кодом {code}. Подробности в журнале", "error")
+                tail = self._tail()
+                log.info("receiver exited with code %s (requested=%s); last output:\n%s",
+                         code, self.receiver.stopping, "\n".join(tail))
+                if not self.receiver.stopping:
+                    hint = _exit_hint(code, tail)
+                    self.fault = {"title": "Приёмник AirPlay остановился",
+                                  "detail": f"{hint} (код {code}).", "tail": tail, "action": "start"}
+                    self.toast(f"Приёмник остановился: {hint}", "error")
             elif val == "running":
                 self.logln("Приёмник запущен")
         self.on_change()
+
+    def act_control(self, op: str, **kw):
+        if not self.control:
+            raise ValueError("Управление недоступно на этом компьютере")
+        res = self.control.dispatch(op, **kw)
+        if op in ("on", "off"):
+            self.cfg["control_enabled"] = op == "on"
+            self.save()
+        if isinstance(res, dict) and res.get("note"):
+            self.toast(res["note"], "info")
+        return res
 
     def _tracker(self):
         while not self._stop.wait(0.4):
@@ -295,4 +403,19 @@ class Core:
         self.receiver.stop()
         self.advertiser.stop()
         self.wifi.enable(False)
+        if self.control:
+            self.control.shutdown()
         self.save()
+
+
+def _exit_hint(code: str, tail: list) -> str:
+    text = "\n".join(tail).lower()
+    if "address already in use" in text or "10048" in text or "bind" in text and "fail" in text:
+        return "порт занят другой программой AirPlay (AirServer, LonelyScreen?) — закройте её"
+    if "no element" in text or "could not" in text and "sink" in text:
+        return "не хватает модуля видео, попробуйте безопасный режим"
+    if code in ("3221225477", "-1073741819"):
+        return "сбой приёмника (ошибка доступа к памяти)"
+    if code in ("3221225781", "-1073741515"):
+        return "не найдена библиотека приёмника — переустановите iMirror"
+    return "приёмник неожиданно завершился"

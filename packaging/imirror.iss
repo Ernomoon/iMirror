@@ -34,7 +34,7 @@ Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Ярлык на рабочем столе"; GroupDescription: "Дополнительно:"
-Name: "bonjour"; Description: "Установить Apple Bonjour (рекомендуется: iPhone надёжнее находит компьютер)"; GroupDescription: "Дополнительно:"; Check: not BonjourInstalled
+Name: "bonjour"; Description: "Установить Apple Bonjour (не обязательно: iMirror использует встроенную службу Windows)"; GroupDescription: "Дополнительно:"; Flags: unchecked; Check: not BonjourInstalled
 
 [Files]
 Source: "..\dist\iMirror\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -51,11 +51,16 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""iMirror AirPlay"""; Flags: runhidden waituntilterminated
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""iMirror"" dir=in action=allow program=""{app}\iMirror.exe"" enable=yes profile=any"; Flags: runhidden waituntilterminated
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""iMirror AirPlay"" dir=in action=allow program=""{app}\receiver\bin\uxplay.exe"" enable=yes profile=any"; Flags: runhidden waituntilterminated
+; Fixed AirPlay ports (UxPlay's legacy set + two spares) and mDNS, independent of the program path.
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""iMirror AirPlay ports"""; Flags: runhidden waituntilterminated
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""iMirror AirPlay ports"" dir=in action=allow protocol=TCP localport=7000,7001,7100,7020,7021,7120,7040,7041,7140 enable=yes profile=any"; Flags: runhidden waituntilterminated
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""iMirror AirPlay ports"" dir=in action=allow protocol=UDP localport=5353,6000,6001,7011,6020,6021,7031,6040,6041,7051 enable=yes profile=any"; Flags: runhidden waituntilterminated
 Filename: "{app}\iMirror.exe"; Description: "Запустить iMirror"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""iMirror"""; Flags: runhidden; RunOnceId: "fw1"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""iMirror AirPlay"""; Flags: runhidden; RunOnceId: "fw2"
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""iMirror AirPlay ports"""; Flags: runhidden; RunOnceId: "fw3"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{localappdata}\iMirror"

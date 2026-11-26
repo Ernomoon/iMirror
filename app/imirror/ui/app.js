@@ -29,7 +29,10 @@ function demoBackend() {
       { id: "bonjour", title: "Служба Bonjour", state: "ok", detail: "Работает: iMirror объявляется через неё" },
       { id: "mdns", title: "Виден в «Повторе экрана»", state: phase === "off" ? "info" : "ok", detail: "Объявлен через Bonjour: 192.168.1.34" },
     ],
-    checking: false, log: ["12:00:01 Приёмник запущен", "12:00:02 Объявлено в сети через Bonjour: 192.168.1.34"], toasts: [],
+    checking: false, log: ["12:00:01 Приёмник запущен", "12:00:02 Объявлено в сети встроенной службой Windows: 192.168.1.34"], toasts: [],
+    fault: phase === "problem" ? { title: "Приёмник AirPlay не запускается", detail: "UxPlay завис при запуске даже в безопасном режиме. Последние строки его вывода ниже и в журнале.",
+      tail: ["UxPlay 1.74: An Open-Source AirPlay mirroring and audio-streaming server.", "using network ports UDP 6000 6001 7011 TCP 7100 7000 7001", "Initialized server socket(s)"], action: "start" } : null,
+    control: { available: true, status: new URLSearchParams(location.search).get("bt") || (live ? "connected" : "off"), error: "", adapter: "", captured: !!new URLSearchParams(location.search).get("cap"), typing: false },
   };
   setInterval(() => {
     if (!api || !api.isDemo || !live) return;
@@ -45,6 +48,8 @@ function demoBackend() {
       if (n === "adapters") return adapters;
       if (n === "start") { st.phase = "starting"; setTimeout(() => { st.phase = "ready"; push(st); }, 1500); }
       if (n === "stop") st.phase = "off";
+      if (n === "control") { const c = st.control; if (a.op === "on") { c.status = "waiting"; setTimeout(() => { c.status = "connected"; push(st); }, 2000); }
+        if (a.op === "off") c.status = "off"; if (a.op === "capture") c.captured = true; if (a.op === "release") c.captured = false; }
       st.receiver.running = st.phase !== "off";
       setTimeout(() => api && api.isDemo && push(st), 30);
       return { ok: true };
@@ -63,9 +68,9 @@ const setCfg = (key, value) => call("set", { key, value });
 /* ================================================================== text */
 const TEXT = {
   off:        { pill: "Выключен",        head: "Приёмник выключен",            sub: "Нажмите «Включить», и компьютер появится в «Повторе экрана» на iPhone.", cta: "Включить" },
-  starting:   { pill: "Включаюсь",       head: "Включаюсь…",                   sub: "Запускаю приёмник и объявляю компьютер в сети.", cta: "Выключить" },
+  starting:   { pill: "Включаюсь",       head: "Включаюсь…",                   sub: "Запускаю приёмник и объявляю компьютер в сети. Обычно это 2–3 секунды.", cta: "Отменить" },
   ready:      { pill: "Ждёт iPhone",     head: "Готов. Подключите iPhone",      sub: "Три шага ниже. Компьютер объявлен в сети, iPhone должен его видеть.", cta: "Выключить" },
-  problem:    { pill: "Есть проблема",   head: "iPhone может не увидеть компьютер", sub: "Ниже в «Проверке» видно, что мешает, и есть кнопки исправления.", cta: "Выключить" },
+  problem:    { pill: "Есть проблема",   head: "iPhone может не увидеть компьютер", sub: "Ниже видно, что мешает, и есть кнопки исправления.", cta: "Выключить" },
   connecting: { pill: "Подключение",     head: "iPhone подключается…",          sub: "Сейчас появится окно с экраном iPhone.", cta: "Выключить" },
   live:       { pill: "На экране",       head: "Экран iPhone на компьютере",    sub: "Окно с картинкой открыто. Чтобы закончить, остановите повтор на iPhone.", cta: "Выключить" },
 };
@@ -120,8 +125,12 @@ function push(s) {
   }
   document.body.classList.toggle("has-window", !!s.receiver.window);
   document.body.classList.toggle("calm", !!s.cfg.reduce_motion);
-  bind("pill", T.pill); setHeadline(T.head); bind("sub", T.sub); bind("cta", T.cta);
+  const fault = s.fault;
+  bind("pill", T.pill); setHeadline(fault && ph === "problem" && !s.receiver.running ? "Приёмник остановился" : T.head); bind("sub", T.sub);
+  bind("cta", ph === "problem" && !s.receiver.running ? "Включить снова" : T.cta);
   $("#cta").classList.toggle("stop", s.receiver.running);
+  renderFault(fault);
+  renderControl(s);
   const r = s.receiver;
   bind("name", s.cfg.server_name || "iMirror");
   num("fps", r.connections ? r.fps : 0); num("peak", r.peak); num("mbps", r.mbps);
@@ -135,6 +144,45 @@ function push(s) {
   if (log.textContent !== text) { const end = log.scrollTop + log.clientHeight >= log.scrollHeight - 8; log.textContent = text; if (end) log.scrollTop = log.scrollHeight; }
   for (const t of s.toasts) if (t.id > lastToast) { lastToast = t.id; if (prev) toast(t); }
   document.body.classList.remove("booting");
+}
+
+function renderFault(f) {
+  const box = $("#fault");
+  box.hidden = !f;
+  if (!f) return;
+  bind("faultTitle", f.title); bind("faultDetail", f.detail);
+  const tail = (f.tail || []).join("\n"), pre = $("#faultTail");
+  if (pre.textContent !== tail) pre.textContent = tail;
+  pre.hidden = !tail;
+  $("#faultRetry").textContent = f.action === "reannounce" ? "Объявить снова" : "Попробовать снова";
+  $("#faultRetry").dataset.action = f.action || "start";
+}
+
+const BT = {
+  off:       ["Выключено", "Включите, и iPhone найдёт компьютер в Настройки → Bluetooth.", "Включить"],
+  starting:  ["Включаю Bluetooth…", "Публикую мышь и клавиатуру.", "Выключить"],
+  waiting:   ["Жду iPhone", "Откройте на iPhone Настройки → Bluetooth и выберите этот компьютер.", "Выключить"],
+  connected: ["iPhone подключён", "Мышь, клавиатура и кнопки ниже управляют iPhone.", "Выключить"],
+  error:     ["Bluetooth недоступен", "", "Повторить"],
+};
+let lastBt = "";
+function renderControl(s) {
+  const c = s.control || { available: false, status: "off" };
+  const st = c.available ? c.status : "error";
+  if (lastBt && st === "connected" && lastBt !== "connected") { const r = $("#device").getBoundingClientRect(); FX.pulse(r.left + r.width / 2, r.top + r.height / 2, true); toast({ text: "iPhone подключён по Bluetooth", kind: "ok" }); }
+  lastBt = st;
+  document.body.dataset.bt = st;
+  document.body.classList.toggle("captured", !!c.captured);
+  const T = BT[st] || BT.off;
+  bind("btTitle", T[0]);
+  bind("btDetail", st === "error" ? (c.available ? c.error : "Компоненты Bluetooth Windows не найдены. Переустановите iMirror") : T[1]);
+  bind("btCta", T[2]);
+  $("#btToggle").classList.toggle("stop", st !== "off" && st !== "error");
+  $("#pad").classList.toggle("disabled", st !== "connected");
+  bind("capTitle", c.captured ? "Мышь у iPhone" : "Взять мышь и клавиатуру");
+  bind("capSub", c.captured ? "Нажмите правый Ctrl, чтобы вернуть" : "Правый Ctrl возвращает их компьютеру");
+  $("#captureBtn").classList.toggle("on", !!c.captured);
+  $("#typeBtn").textContent = c.typing ? "Печатаю…" : "Напечатать";
 }
 
 const ICON = { ok: '<svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg>', bad: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
@@ -244,7 +292,7 @@ function segSelect(seg, btn) {
   const th = $(".thumb", seg); th.style.width = btn.offsetWidth + "px"; th.style.transform = `translateX(${btn.offsetLeft - 4}px)`;
 }
 function go(name) {
-  const order = ["home", "settings"], to = order.indexOf(name);
+  const order = ["home", "control", "settings"], to = order.indexOf(name);
   for (const p of $$(".page")) { p.classList.remove("on", "left"); if (order.indexOf(p.dataset.page) < to) p.classList.add("left"); }
   $(`.page[data-page="${name}"]`).classList.add("on");
   segSelect($("#nav"), $(`[data-nav="${name}"]`));
@@ -268,7 +316,7 @@ const FX = (() => {
     { x: .45, y: .95, r: .5, c: [120, 40, 130], sx: .09, sy: .04, p: 4 },
     { x: .7, y: .8, r: .35, c: [20, 160, 130], sx: .06, sy: .07, p: 1 },
   ];
-  const parts = [], sparks = [];
+  const parts = [], sparks = [], pulses = [];
   function resize() {
     dpr = Math.min(devicePixelRatio || 1, 2); W = innerWidth; H = innerHeight;
     for (const c of [sky, fx]) { c.width = W * dpr; c.height = H * dpr; }
@@ -306,8 +354,20 @@ const FX = (() => {
         if (p.y < -10) p.y = H + 10; if (p.y > H + 10) p.y = -10; if (p.x < -10) p.x = W + 10;
       }
       const tw = .35 + .65 * Math.abs(Math.sin(t * 1.3 + p.a));
-      fg.fillStyle = phase === "live" ? `rgba(127,247,211,${.5 * tw})` : phase === "problem" ? `rgba(255,200,100,${.4 * tw})` : `rgba(190,220,255,${.45 * tw})`;
+      if (phase === "live" && !still) {                               // warp streaks out of the iPhone
+        const len = 6 + p.z * 26 * p.s, gl = fg.createLinearGradient(p.x - len, p.y, p.x, p.y);
+        gl.addColorStop(0, "rgba(127,247,211,0)"); gl.addColorStop(1, `rgba(190,255,236,${.75 * tw})`);
+        fg.strokeStyle = gl; fg.lineWidth = .6 + p.z * 1.5; fg.beginPath(); fg.moveTo(p.x - len, p.y); fg.lineTo(p.x, p.y); fg.stroke();
+        continue;
+      }
+      fg.fillStyle = phase === "problem" ? `rgba(255,200,100,${.4 * tw})` : `rgba(190,220,255,${.45 * tw})`;
       fg.beginPath(); fg.arc(p.x, p.y, .6 + p.z * 1.4, 0, 6.29); fg.fill();
+    }
+    for (let i = pulses.length - 1; i >= 0; i--) {
+      const q = pulses[i]; q.k += .022; if (q.k >= 1) { pulses.splice(i, 1); continue; }
+      const e = 1 - Math.pow(1 - q.k, 3);
+      fg.strokeStyle = `rgba(${q.c},${(1 - q.k) * .8})`; fg.lineWidth = 2 * (1 - q.k) + .5;
+      fg.beginPath(); fg.arc(q.x, q.y, 6 + e * q.r, 0, 6.29); fg.stroke();
     }
     for (let i = sparks.length - 1; i >= 0; i--) {
       const s = sparks[i]; s.vx *= .985; s.vy = s.vy * .985 + .09; s.x += s.vx; s.y += s.vy; s.life -= .012; s.rot += s.vr;
@@ -320,6 +380,10 @@ const FX = (() => {
   requestAnimationFrame(frame);
   return {
     phase(p) { phase = p; },
+    pulse(x, y, big) {
+      if (calm()) return;
+      for (let i = 0; i < (big ? 3 : 2); i++) setTimeout(() => pulses.push({ x, y, k: 0, r: big ? 260 : 90, c: big ? "180,155,255" : "159,214,255" }), i * 120);
+    },
     burst(x, y) {
       if (calm()) return;
       const cols = ["#9fd6ff", "#b49bff", "#ff8fc7", "#ffd08a", "#5ef2c2", "#ffffff"];
@@ -347,6 +411,16 @@ document.addEventListener("DOMContentLoaded", () => {
   $$("[data-nav]").forEach((b) => b.onclick = () => go(b.dataset.nav));
   $$("[data-act]").forEach((b) => b.addEventListener("click", (e) => { ripple(e); call(b.dataset.act); }));
   $("#cta").addEventListener("click", (e) => { ripple(e); call(S && S.receiver.running ? "stop" : "start"); });
+  $("#faultRetry").addEventListener("click", (e) => { ripple(e); const a = e.currentTarget.dataset.action;
+    call(a === "reannounce" ? "reannounce" : "restart"); });
+  $("#btToggle").addEventListener("click", (e) => { ripple(e); const st = S && S.control ? S.control.status : "off";
+    call("control", { op: st === "off" || st === "error" ? "on" : "off" }); });
+  $("#captureBtn").addEventListener("click", (e) => { ripple(e); call("control", { op: S && S.control && S.control.captured ? "release" : "capture" }); });
+  $$("[data-ctl]").forEach((b) => b.addEventListener("click", (e) => { ripple(e); FX.pulse(e.clientX, e.clientY);
+    call("control", b.dataset.key ? { op: b.dataset.ctl, key: b.dataset.key } : { op: b.dataset.ctl }); }));
+  $("#typeBtn").addEventListener("click", (e) => { ripple(e); const t = $("#typeText").value; if (t.trim()) call("control", { op: "type", text: t }); });
+  const glow = $(".cursor-glow");
+  document.addEventListener("pointermove", (e) => { glow.style.translate = `${e.clientX}px ${e.clientY}px`; });
   for (const el of $$("[data-cfg]")) {
     const key = el.dataset.cfg;
     el.addEventListener("focus", () => editing = el);

@@ -6,7 +6,7 @@ ROOT = SPECPATH + "/.."
 datas = [(ROOT + "/app/imirror/ui", "imirror/ui")]
 binaries = []
 hiddenimports = collect_submodules("zeroconf") + ["ifaddr"]
-for pkg in ("webview", "clr_loader", "pythonnet"):
+for pkg in ("webview", "clr_loader", "pythonnet", "winrt"):
     try:
         d, b, h = collect_all(pkg)
         datas += d; binaries += b; hiddenimports += h

@@ -20,6 +20,58 @@ PRESETS = {
 
 VIDEO_SINKS = ["d3d12videosink", "d3d11videosink", "autovideosink"]
 
+# Fixed ports (UxPlay's documented legacy set, like iPhoneMirror): random ports are unsupported
+# behind a firewall. (tcp: mirror, control, data; udp: timing, control, audio)
+PORT_SETS = [
+    ((7100, 7000, 7001), (6000, 6001, 7011)),
+    ((7120, 7020, 7021), (6020, 6021, 7031)),
+    ((7140, 7040, 7041), (6040, 6041, 7051)),
+]
+H264_PARSER = "h264parse config-interval=-1 disable-passthrough=true"
+H264_SOFT_DECODER = ("avdec_h264 output-corrupt=false discard-corrupted-frames=true "
+                     "automatic-request-sync-points=true")
+
+
+def _ports_free(tcp, udp) -> bool:
+    import socket
+    for kind, ports in ((socket.SOCK_STREAM, tcp), (socket.SOCK_DGRAM, udp)):
+        for p in ports:
+            s = socket.socket(socket.AF_INET, kind)
+            try:
+                if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                s.bind(("0.0.0.0", p))
+            except OSError:
+                return False
+            finally:
+                s.close()
+    return True
+
+
+def pick_ports():
+    """First fixed port set that is free, else None (UxPlay picks random ports)."""
+    for tcp, udp in PORT_SETS:
+        if _ports_free(tcp, udp):
+            return tcp, udp
+    return None
+
+
+def safe_name(name: str) -> str:
+    """UxPlay's Windows argument parser splits on whitespace: use one DNS-SD-safe token."""
+    name = re.sub(r"\s+", "-", (name or "").strip())
+    name = re.sub(r"[^\w\-.()\[\]]", "", name, flags=re.UNICODE).strip("-.")
+    return name[:48] or "iMirror"
+
+
+def device_id(cfg: dict) -> str:
+    v = str(cfg.get("device_id") or "")
+    if re.fullmatch(r"02(:[0-9a-f]{2}){5}", v):
+        return v
+    import secrets
+    v = "02:" + ":".join(f"{b:02x}" for b in secrets.token_bytes(5))
+    cfg["device_id"] = v
+    return v
+
 
 def build_args(cfg: dict, exe: str) -> list[str]:
     w = int(cfg["width"]); h = int(cfg["height"])
@@ -28,8 +80,15 @@ def build_args(cfg: dict, exe: str) -> list[str]:
         raise ValueError("Разрешение: от 1 до 9999 по каждой стороне")
     if not (1 <= r <= 255 and 1 <= fps <= 255):
         raise ValueError("Частота и FPS: от 1 до 255 (ограничение протокола UxPlay)")
-    name = (cfg.get("server_name") or "iMirror").strip() or "iMirror"
-    args = [exe, "-n", name, "-nh", "-s", f"{w}x{h}@{r}", "-fps", str(fps), "-nohold"]
+    name = safe_name(cfg.get("server_name") or "iMirror")
+    args = [exe, "-n", name, "-nh", "-m", device_id(cfg)]
+    ports = cfg.get("_ports", "auto")
+    if ports == "auto":
+        ports = pick_ports()
+    if ports:
+        tcp, udp = ports
+        args += ["-p", "tcp", ",".join(map(str, tcp)), "-p", "udp", ",".join(map(str, udp))]
+    args += ["-s", f"{w}x{h}@{r}", "-fps", str(fps), "-nohold", "-nofreeze", "-vp", H264_PARSER]
     if cfg.get("h265"):
         args.append("-h265")
     if cfg.get("low_latency"):
@@ -41,7 +100,7 @@ def build_args(cfg: dict, exe: str) -> list[str]:
     sink = pick_sink(exe, cfg.get("video_sink") or "d3d12videosink")
     args += ["-vs", sink]
     if cfg.get("software_decode"):
-        args.append("-avdec")
+        args += ["-avdec", "-vp", H264_PARSER, "-vd", H264_SOFT_DECODER]
     pin = str(cfg.get("pin") or "").strip()
     if pin:
         if not re.fullmatch(r"\d{4}", pin) or pin == "0000":
@@ -177,6 +236,10 @@ class Receiver:
         self.proc: subprocess.Popen | None = None
         self.info = StreamInfo()
         self._reader: threading.Thread | None = None
+        self.tail = deque(maxlen=40)          # last output lines (shown when UxPlay stops or hangs)
+        self.stage = ""                       # "", "register", "ready"
+        self.stopping = False                 # stop() was requested by iMirror itself
+        self.started_at = 0.0
 
     @property
     def running(self) -> bool:
@@ -199,6 +262,11 @@ class Receiver:
         if sys.platform == "win32":
             flags = subprocess.CREATE_NO_WINDOW
         self.info = StreamInfo()
+        self.tail.clear()
+        self.stage = ""
+        self.stopping = False
+        import time as _t
+        self.started_at = _t.monotonic()
         self.on_event("log", "Запуск: " + " ".join(args[1:]))
         self.proc = subprocess.Popen(
             args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -220,19 +288,35 @@ class Receiver:
             while b"\n" in buf:
                 raw, buf = buf.split(b"\n", 1)
                 line = raw.decode("utf-8", errors="replace").rstrip("\r")
-                if self.line_hook and self.line_hook(line):
-                    continue
-                kind = parse_line(line, self.info)
-                if kind:
-                    self.on_event(kind, self.info)
-                elif line.strip():
-                    self.on_event("log", line)
+                if proc is self.proc:
+                    self.tail.append(line[:300])
+                try:
+                    self._line(line)
+                except Exception:          # never let one bad line stop reading (the pipe would fill up)
+                    import logging
+                    logging.getLogger("imirror").exception("receiver line %r", line[:200])
         code = proc.wait()
         if proc is self.proc:
             self.info = StreamInfo()
             self.on_event("state", f"stopped:{code}")
 
+    def _line(self, line: str):
+        if line.startswith("IMIRROR_STAGE "):
+            self.stage = line.split(" ", 1)[1].strip()
+            self.on_event("stage", self.stage)
+            return
+        if self.line_hook and self.line_hook(line):
+            if line.startswith("IMIRROR_MDNS"):
+                self.stage = "ready"
+            return
+        kind = parse_line(line, self.info)
+        if kind:
+            self.on_event(kind, self.info)
+        elif line.strip():
+            self.on_event("log", line)
+
     def stop(self):
+        self.stopping = True
         proc = self.proc
         if proc and proc.poll() is None:
             proc.terminate()

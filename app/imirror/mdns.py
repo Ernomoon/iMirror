@@ -1,12 +1,13 @@
-"""AirPlay service announcement (mDNS / Bonjour) done by iMirror itself.
+"""AirPlay service announcement (mDNS) done by iMirror itself.
 
 UxPlay (patched) only prints its service data (IMIRROR_MDNS lines). iMirror announces it with
-the most reliable method available on this PC:
+the most reliable method available on this PC, in this order:
 
-  1. Apple Bonjour service (dnssd.dll, mDNSResponder) — the system responder that owns UDP
-     5353 and answers every network with that network's own address (LonelyScreen does this).
-  2. python-zeroconf on the real LAN adapters — when Bonjour is not installed. Runs with a
-     watchdog so it can never hang silently.
+  1. Windows' own mDNS responder (dnsapi DnsServiceRegister, Windows 10 1809+) on the best
+     physical adapter — what iPhoneMirror does; nothing competes with Windows for UDP 5353.
+  2. Apple Bonjour service (dnssd.dll) when installed.
+  3. python-zeroconf on the real LAN adapters.
+Every step runs under a watchdog so it can never hang silently.
 """
 from __future__ import annotations
 
@@ -149,9 +150,60 @@ def _adapters_ifaddr() -> list[Adapter]:
     return out
 
 
-def list_adapters() -> list[Adapter]:
+def _adapters_native() -> list[Adapter]:
+    from . import netif
+    res = []
+    for i in netif.interfaces():
+        low = (i.name + " " + i.description).lower()
+        hint = next((h for h in VIRTUAL_HINTS if h in low), None)
+        for ip, pfx in i.ips:
+            reasons = []
+            if hint or i.looks_virtual:
+                reasons.append(f"виртуальный адаптер или VPN{f' ({hint.strip()})' if hint else ''}")
+            elif not i.physical:
+                reasons.append("не физический адаптер")
+            res.append(Adapter(i.name, ip, bool(reasons), int(pfx or 24), reasons, i.description, i.index,
+                               i.gateway, i.wifi, ""))
+    return res
+
+
+_profiles_cache: dict = {}
+
+
+def network_profiles(timeout=20) -> dict[int, str]:
+    """{ifIndex: 'Public'|'Private'|'DomainAuthenticated'} (PowerShell, cached)."""
+    if sys.platform != "win32":
+        return {}
+    if _profiles_cache.get("t", 0) > time.time() - 30:
+        return _profiles_cache["v"]
+    try:
+        out, _ = _powershell("[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
+                             "@(Get-NetConnectionProfile | Select-Object InterfaceIndex,"
+                             "@{n='c';e={[string]$_.NetworkCategory}}) | ConvertTo-Json -Compress", timeout)
+        data = json.loads(out.strip() or "[]")
+        if isinstance(data, dict):
+            data = [data]
+        v = {int(d["InterfaceIndex"]): d.get("c") or "" for d in data}
+    except Exception as e:
+        log.warning("network profiles: %r", e)
+        v = {}
+    _profiles_cache.update(t=time.time(), v=v)
+    return v
+
+
+def list_adapters(with_profiles=False) -> list[Adapter]:
     """IPv4 adapters with a classification (real LAN vs virtual/VPN)."""
     if sys.platform == "win32":
+        try:
+            res = _adapters_native()
+            if res:
+                if with_profiles:
+                    prof = network_profiles()
+                    for a in res:
+                        a.profile = prof.get(a.index, "")
+                return res
+        except Exception as e:
+            log.warning("adapter scan (GetAdaptersAddresses) failed: %r", e)
         try:
             res = _adapters_windows()
             if res:
@@ -281,6 +333,7 @@ class Advertiser:
         self._zc = None
         self._infos = []
         self._bonjour = None
+        self._native = None
         self._lock = threading.Lock()
         self.addresses: list[str] = []
         self.forced_ip = ""
@@ -340,9 +393,31 @@ class Advertiser:
             log.info("adapters: %s", [(a.name, a.ip, a.virtual, a.gateway, a.profile) for a in adapters])
             ad = [asdict(a) for a in adapters]
 
-            # 1) Apple Bonjour service
-            method = os.environ.get("IMIRROR_MDNS_METHOD", "")      # tests: force "zeroconf"
-            if not self.forced_ip and method != "zeroconf" and Bonjour.load() is not None:
+            method = os.environ.get("IMIRROR_MDNS_METHOD", "")      # tests: force native/bonjour/zeroconf
+            errors = []
+
+            # 1) Windows' built-in mDNS responder on the best physical adapter
+            from . import netif
+            if method in ("", "native") and netif.WinDnsSd.available():
+                try:
+                    best = netif.best_interface(netif.interfaces(), self.forced_ip)
+                    if best is not None:
+                        n = netif.WinDnsSd()
+                        ok, msg = n.register(specs, best.index)
+                        log.info("windows dns-sd on %s (%s): %s %s", best.name, best.index, ok, msg)
+                        if ok:
+                            self._native = n
+                            self.method = "native"
+                            self.addresses = [ip for ip, _ in best.ips]
+                            return {"ok": True, "method": "native", "addresses": self.addresses, "adapters": ad,
+                                    "iface": best.name, "detail": msg}
+                        errors.append(msg)
+                except Exception as e:
+                    log.exception("windows dns-sd failed")
+                    errors.append(f"Windows DNS-SD: {e}")
+
+            # 2) Apple Bonjour service
+            if not self.forced_ip and method in ("", "bonjour") and Bonjour.load() is not None:
                 b = Bonjour()
                 ok, msg = b.register(specs)
                 log.info("bonjour: %s %s", ok, msg)
@@ -352,10 +427,13 @@ class Advertiser:
                     self.addresses = addrs
                     return {"ok": True, "method": "bonjour", "addresses": addrs, "adapters": ad, "detail": msg}
                 b.stop()
+                errors.append(f"Bonjour: {msg}")
 
-            # 2) python-zeroconf on the LAN adapters
+            # 3) python-zeroconf on the LAN adapters
             if not addrs:
                 return {"ok": False, "error": "компьютер не подключён к сети", "adapters": ad}
+            if method not in ("", "zeroconf"):
+                return {"ok": False, "error": "; ".join(errors) or f"метод {method} недоступен", "adapters": ad}
             from zeroconf import IPVersion, ServiceInfo, Zeroconf
             log.info("zeroconf on %s", addrs)
             self._zc = Zeroconf(interfaces=addrs, ip_version=IPVersion.V4Only)
@@ -373,6 +451,9 @@ class Advertiser:
             return {"ok": True, "method": "zeroconf", "addresses": addrs, "adapters": ad}
 
     def _stop_locked(self):
+        if self._native is not None:
+            self._native.stop()
+            self._native = None
         if self._bonjour is not None:
             self._bonjour.stop()
             self._bonjour = None

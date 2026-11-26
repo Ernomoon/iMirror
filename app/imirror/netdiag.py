@@ -17,7 +17,9 @@ from .mdns import Bonjour, bonjour_running, list_adapters, _powershell
 
 log = logging.getLogger("imirror")
 IS_WIN = sys.platform == "win32"
-RULE_APP, RULE_RX = "iMirror", "iMirror AirPlay"
+RULE_APP, RULE_RX, RULE_PORTS = "iMirror", "iMirror AirPlay", "iMirror AirPlay ports"
+TCP_PORTS = "7000,7001,7100,7020,7021,7120,7040,7041,7140"
+UDP_PORTS = "5353,6000,6001,7011,6020,6021,7031,6040,6041,7051"
 
 
 def _run(cmd, timeout=15):
@@ -35,9 +37,25 @@ def run_elevated(ps_script: str) -> bool:
     return rc > 32
 
 
-def _firewall_rule_ok(name: str) -> bool:
-    out, code = _run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={name}"])
-    return code == 0 and ("Yes" in out or "Да" in out)
+def firewall_rules() -> dict[str, bool]:
+    """{DisplayName: enabled-and-allow} for iMirror's rules (locale-independent)."""
+    out, _ = _powershell("[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
+                         f"@(Get-NetFirewallRule -DisplayName '{RULE_APP}','{RULE_RX}','{RULE_PORTS}' "
+                         "-ErrorAction SilentlyContinue | Select-Object DisplayName,"
+                         "@{n='e';e={[string]$_.Enabled}},@{n='a';e={[string]$_.Action}},"
+                         "@{n='d';e={[string]$_.Direction}}) | ConvertTo-Json -Compress", 20)
+    try:
+        data = json.loads(out.strip() or "[]")
+    except ValueError:
+        log.warning("firewall rules: %r", out[:300])
+        return {}
+    if isinstance(data, dict):
+        data = [data]
+    res: dict[str, bool] = {}
+    for r in data:
+        ok = r.get("e") == "True" and r.get("a") == "Allow" and r.get("d") == "Inbound"
+        res[r.get("DisplayName", "")] = res.get(r.get("DisplayName", ""), False) or ok
+    return res
 
 
 def _third_party_firewalls():
@@ -65,7 +83,7 @@ def run_checks(app_exe: str, uxplay_exe: str, receiver_running: bool, port: int,
     checks = []
 
     # 1. network adapters
-    adapters = list_adapters()
+    adapters = list_adapters(with_profiles=True)
     lan = [a for a in adapters if not a.virtual]
     vpn = [a for a in adapters if a.virtual and a.gateway]
     if lan:
@@ -98,9 +116,11 @@ def run_checks(app_exe: str, uxplay_exe: str, receiver_running: bool, port: int,
 
     # 4. Windows firewall rules
     if IS_WIN:
-        ok_rx = _firewall_rule_ok(RULE_RX)
-        ok_app = _firewall_rule_ok(RULE_APP)
-        if ok_rx and ok_app:
+        rules = firewall_rules()
+        log.info("firewall rules: %s", rules)
+        ok_rx = rules.get(RULE_RX, False)
+        ok_ports = rules.get(RULE_PORTS, False)
+        if ok_rx and ok_ports:
             checks.append({"id": "fw", "title": "Брандмауэр Windows", "state": "ok", "detail": "iMirror разрешён"})
         else:
             checks.append({"id": "fw", "title": "Брандмауэр Windows", "state": "bad",
@@ -117,14 +137,19 @@ def run_checks(app_exe: str, uxplay_exe: str, receiver_running: bool, port: int,
         running = bonjour_running() if have else False
         if have and running:
             checks.append({"id": "bonjour", "title": "Служба Bonjour", "state": "ok",
-                           "detail": "Работает: iMirror объявляется через неё, как AirServer и LonelyScreen"})
+                           "detail": "Работает (запасной способ объявления)"})
         elif have:
             checks.append({"id": "bonjour", "title": "Служба Bonjour", "state": "bad",
                            "detail": "Установлена, но остановлена.", "fix": "bonjour_start", "fix_title": "Запустить"})
         else:
-            checks.append({"id": "bonjour", "title": "Служба Bonjour", "state": "info",
-                           "detail": "Не установлена. iMirror объявляется сам; если iPhone не видит компьютер, установите Bonjour.",
-                           "fix": "bonjour_install", "fix_title": "Установить"})
+            from .netif import WinDnsSd
+            if WinDnsSd.available():
+                checks.append({"id": "bonjour", "title": "Служба объявления", "state": "ok",
+                               "detail": "Встроенная в Windows (как в iPhoneMirror). Bonjour не нужен"})
+            else:
+                checks.append({"id": "bonjour", "title": "Служба Bonjour", "state": "info",
+                               "detail": "Windows старше 10 1809: установите Bonjour, если iPhone не видит компьютер.",
+                               "fix": "bonjour_install", "fix_title": "Установить"})
 
     # 6. receiver + announcement
     if receiver_running and port:
@@ -132,7 +157,8 @@ def run_checks(app_exe: str, uxplay_exe: str, receiver_running: bool, port: int,
         checks.append({"id": "port", "title": "Приёмник AirPlay", "state": "ok" if listening else "bad",
                        "detail": f"Принимает подключения на порту {port}" if listening else f"Порт {port} не отвечает"})
         if mdns_state.get("ok"):
-            how = "через Bonjour" if mdns_state.get("method") == "bonjour" else "собственным объявлением"
+            how = {"native": "встроенной службой Windows", "bonjour": "через Bonjour"}.get(
+                mdns_state.get("method"), "собственным объявлением")
             checks.append({"id": "mdns", "title": "Виден в «Повторе экрана»", "state": "ok",
                            "detail": f"Объявлен {how}: " + ", ".join(mdns_state.get("addresses", []))})
         elif mdns_state.get("ok") is False:
@@ -148,10 +174,11 @@ def run_checks(app_exe: str, uxplay_exe: str, receiver_running: bool, port: int,
 def apply_fix(fix: str, arg: str, app_exe: str, uxplay_exe: str) -> bool:
     log.info("fix %s %s", fix, arg)
     if fix == "firewall":
-        script = (f"Remove-NetFirewallRule -DisplayName '{RULE_APP}' -ErrorAction SilentlyContinue; "
-                  f"Remove-NetFirewallRule -DisplayName '{RULE_RX}' -ErrorAction SilentlyContinue; "
+        script = (f"Remove-NetFirewallRule -DisplayName '{RULE_APP}','{RULE_RX}','{RULE_PORTS}' -ErrorAction SilentlyContinue; "
                   f"New-NetFirewallRule -DisplayName '{RULE_APP}' -Direction Inbound -Action Allow -Profile Any -Program '{app_exe}'; "
-                  f"New-NetFirewallRule -DisplayName '{RULE_RX}' -Direction Inbound -Action Allow -Profile Any -Program '{uxplay_exe}'")
+                  f"New-NetFirewallRule -DisplayName '{RULE_RX}' -Direction Inbound -Action Allow -Profile Any -Program '{uxplay_exe}'; "
+                  f"New-NetFirewallRule -DisplayName '{RULE_PORTS}' -Direction Inbound -Action Allow -Profile Any -Protocol TCP -LocalPort {TCP_PORTS}; "
+                  f"New-NetFirewallRule -DisplayName '{RULE_PORTS}' -Direction Inbound -Action Allow -Profile Any -Protocol UDP -LocalPort {UDP_PORTS}")
         return run_elevated(script.replace('"', "'"))
     if fix == "profile":
         idx = ",".join(i for i in arg.split(",") if i.isdigit())

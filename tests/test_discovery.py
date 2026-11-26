@@ -50,7 +50,11 @@ def main(uxplay):
     print("announce on:", addrs)
 
     env = receiver_env(uxplay)          # bundled GStreamer + IMIRROR_EXTERNAL_MDNS=1
-    proc = subprocess.Popen([uxplay, "-n", "iMirror Test", "-nh", "-vs", "fakesink", "-as", "0"],
+    import os
+    want = os.environ.get("IMIRROR_MDNS_METHOD", "")
+    proc = subprocess.Popen([uxplay, "-n", "iMirror-Test", "-nh", "-vs", "fakesink", "-as", "0",
+                             "-m", "02:11:22:33:44:55", "-p", "tcp", "7100,7000,7001", "-p", "udp", "6000,6001,7011",
+                             "-nofreeze"],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
     events = []
     ready = threading.Event()
@@ -67,7 +71,10 @@ def main(uxplay):
         assert ready.wait(40), "no announcement result"
         assert events[-1][1].get("ok"), events
         method = events[-1][1].get("method")
-        print("announced via", method, events[-1][1].get("addresses"))
+        print("announced via", method, events[-1][1].get("addresses"), events[-1][1].get("detail", ""))
+        if want:
+            assert method == want, f"expected {want}, got {method}"
+        assert adv.port == 7000, adv.port
         if method == "bonjour":
             # verify with Apple's own browser, then the server answers
             port = adv.port
@@ -77,7 +84,7 @@ def main(uxplay):
             p.kill()
             out = p.stdout.read().decode("utf-8", "replace")
             print("dns-sd -B:\n" + out)
-            assert "iMirror Test" in out, "Bonjour browse does not see the service"
+            assert "iMirror-Test" in out, "Bonjour browse does not see the service"
             status, body = http_get_info("127.0.0.1", port)
             assert b"200" in status, status
             print("DISCOVERY E2E OK (bonjour)")
@@ -88,7 +95,7 @@ def main(uxplay):
         class L:
             def add_service(self, zc, t, name):
                 info = zc.get_service_info(t, name, timeout=3000)
-                if info and "iMirror Test" in name:
+                if info and "iMirror-Test" in name:
                     found[t] = info
                     if len(found) == 2:
                         got.set()
@@ -107,7 +114,7 @@ def main(uxplay):
         print("resolved:", info.name, info.parsed_addresses(), info.port, props.get("features"), props.get("model"))
         assert props.get("deviceid") and props.get("features") and props.get("pk"), props
         raop = found["_raop._tcp.local."]
-        assert "@iMirror Test" in raop.name, raop.name
+        assert "@iMirror-Test" in raop.name, raop.name
         status, body = http_get_info(info.parsed_addresses()[0], info.port)
         print("GET /info ->", status)
         assert b"200" in status, status

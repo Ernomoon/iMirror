@@ -26,6 +26,20 @@ class TestReceiverArgs(unittest.TestCase):
         self.assertEqual(a[a.index("-fps") + 1], "120")
         self.assertIn("-h265", a)
         self.assertEqual(a[a.index("-vsync") + 1], "no")
+        self.assertIn("-nofreeze", a)
+        self.assertRegex(a[a.index("-m") + 1], r"^02(:[0-9a-f]{2}){5}$")
+
+    def test_ports_and_name(self):
+        cfg = dict(self.CFG, server_name="Мой ПК  дома", _ports=((7100, 7000, 7001), (6000, 6001, 7011)),
+                   device_id="02:aa:bb:cc:dd:ee")
+        a = build_args(cfg, "uxplay.exe")
+        self.assertEqual(a[a.index("-n") + 1], "Мой-ПК-дома")
+        self.assertEqual(a[a.index("-m") + 1], "02:aa:bb:cc:dd:ee")
+        i = a.index("-p")
+        self.assertEqual(a[i:i + 6], ["-p", "tcp", "7100,7000,7001", "-p", "udp", "6000,6001,7011"])
+        cfg.update(software_decode=True)
+        a = build_args(cfg, "uxplay.exe")
+        self.assertIn("avdec_h264 output-corrupt=false", a[a.index("-vd") + 1])
 
     def test_limits(self):
         cfg = dict(self.CFG, refresh=256)
@@ -46,6 +60,18 @@ class TestReceiverArgs(unittest.TestCase):
         self.assertEqual((info.codec, info.width, info.height, info.fps), ("h265", 1179, 2556, 59.8))
         parse_line("IMIRROR_CONN open=0", info)
         self.assertEqual(info.fps, 0.0)
+
+
+class TestNetif(unittest.TestCase):
+    def test_txt_and_best(self):
+        from imirror import netif
+        self.assertEqual(netif.parse_txt(b"\x05a=1,2\x04pk=x\x00"), [("a", "1,2"), ("pk", "x")])
+        I = netif.Iface
+        wifi = I(5, "Беспроводная сеть", "Intel Wi-Fi 6", netif.IF_TYPE_IEEE80211, [("192.168.1.5", 24)], True, 35)
+        vpn = I(9, "AmneziaWG", "AmneziaWG Tunnel", netif.IF_TYPE_ETHERNET, [("10.8.1.2", 32)], True, 5)
+        veth = I(7, "vEthernet (WSL)", "Hyper-V Virtual Ethernet Adapter", netif.IF_TYPE_ETHERNET, [("172.20.0.1", 20)], False, 15)
+        self.assertIs(netif.best_interface([vpn, veth, wifi]), wifi)
+        self.assertIs(netif.best_interface([vpn, veth, wifi], "172.20.0.1"), veth)
 
 
 class TestMdns(unittest.TestCase):

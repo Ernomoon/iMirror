@@ -11,7 +11,7 @@ permissions:
 env:
   PYTHONUTF8: "1"
   PYTHONIOENCODING: utf-8
-  UXPLAY_COMMIT: 566f3460e3cbb16c2c33a7ac607d3d2d0dd09b14   # UxPlay 1.74, verified with receiver/patch_uxplay.py
+  UXPLAY_COMMIT: aec205d49302df8d4eb291b9e927ed428b2d0166   # UxPlay 1.74, verified with receiver/patch_uxplay.py
 
 jobs:
   linux:
@@ -112,7 +112,17 @@ jobs:
       - name: Unit tests on Windows
         run: python tests/test_all.py
 
-      - name: Discovery end-to-end on Windows (no Bonjour, zeroconf path)
+      - name: Bluetooth control (WinRT HID over GATT) smoke test
+        run: python packaging/smoke_ble.py
+
+      - name: Discovery end-to-end on Windows - built-in Windows DNS-SD (like iPhoneMirror)
+        env:
+          IMIRROR_MDNS_METHOD: native
+        run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
+
+      - name: Discovery end-to-end on Windows - zeroconf fallback
+        env:
+          IMIRROR_MDNS_METHOD: zeroconf
         run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
 
       - name: PyInstaller
@@ -152,7 +162,12 @@ jobs:
           IMIRROR_MDNS_METHOD: zeroconf
         run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
 
-      - name: Discovery end-to-end with Bonjour (as on the user's PC)
+      - name: Discovery end-to-end with Bonjour installed (default order, as on the user's PC)
+        run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
+
+      - name: Discovery end-to-end via Bonjour fallback
+        env:
+          IMIRROR_MDNS_METHOD: bonjour
         run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
 
       - name: Self-test of the built app with Bonjour

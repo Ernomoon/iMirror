@@ -25,6 +25,8 @@ DEFAULTS = {
     "wifi_boost": True,       # Wi-Fi media-streaming mode while mirroring
     "reduce_motion": False,
     "autostart": True,        # start the receiver when iMirror opens
+    "device_id": "",          # stable AirPlay device id (02:xx:..), generated once
+    "control_enabled": False, # Bluetooth control of the iPhone (turned on from the UI)
 }
 
 
