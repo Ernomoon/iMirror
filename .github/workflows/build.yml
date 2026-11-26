@@ -10,6 +10,8 @@ permissions:
   contents: write
 
 env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
   UXPLAY_COMMIT: 566f3460e3cbb16c2c33a7ac607d3d2d0dd09b14   # UxPlay 1.74, verified with receiver/patch_uxplay.py
 
 jobs:
@@ -24,7 +26,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q libplist-dev libssl-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-            gstreamer1.0-plugins-base gstreamer1.0-plugins-good cmake ninja-build g++
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav cmake ninja-build g++
       - name: Build patched UxPlay
         run: |
           git clone -q https://github.com/FDH2/UxPlay.git /tmp/UxPlay
