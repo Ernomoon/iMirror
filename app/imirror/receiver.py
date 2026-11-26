@@ -118,7 +118,8 @@ def bundle_root() -> Path:
 
 def receiver_env(exe: str) -> dict:
     """Environment for uxplay: bundled GStreamer is isolated from any other GStreamer install."""
-    env = os.environ.copy()
+    env = {k: v for k, v in os.environ.items()
+           if not k.upper().startswith(("_MEI", "_PYI", "PYTHON", "TCL_", "TK_", "QT_", "WEBVIEW2", "GST_", "GIO_", "GTK_"))}
     bindir = Path(exe).resolve().parent
     root = bindir.parent
     plugins = root / "lib" / "gstreamer-1.0"
@@ -166,6 +167,19 @@ def pick_sink(exe: str, wanted: str) -> str:
         if has(el):
             return el
     return "autovideosink"
+
+
+def output_log_path() -> Path:
+    base = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "iMirror"
+    base.mkdir(parents=True, exist_ok=True)
+    for i in range(4):                 # an old receiver may still hold the file for a moment
+        p = base / (f"uxplay-output.log" if i == 0 else f"uxplay-output-{i}.log")
+        try:
+            with open(p, "wb"):
+                return p
+        except OSError:
+            continue
+    return base / f"uxplay-output-{os.getpid()}.log"
 
 
 def find_uxplay(cfg: dict) -> str | None:
@@ -279,9 +293,37 @@ class Receiver:
         import time as _t
         self.started_at = _t.monotonic()
         self.on_event("log", "Запуск: " + " ".join(args[1:]))
-        self.proc = subprocess.Popen(
-            args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-            env=env, creationflags=flags)
+        # Output goes to a file that iMirror tails, not to a pipe: on some PCs UxPlay stops
+        # dead on its first write after the network sockets open when stdout is a pipe from
+        # iMirror, while the same binary runs fine with a file (verified on the user's PC).
+        dll_dir = None
+        if sys.platform == "win32" and getattr(sys, "frozen", False):
+            # PyInstaller points the DLL search path at iMirror's own folder; children inherit it,
+            # so UxPlay could pick up iMirror's copies of shared DLLs instead of its own.
+            try:
+                import ctypes
+                k32 = ctypes.windll.kernel32
+                b = ctypes.create_unicode_buffer(1024)
+                if k32.GetDllDirectoryW(1024, b):
+                    dll_dir = b.value
+                k32.SetDllDirectoryW(None)
+            except Exception:
+                pass
+        out_path = output_log_path()
+        out = open(out_path, "wb")
+        try:
+            self.proc = subprocess.Popen(
+                args, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                env=env, creationflags=flags, cwd=str(Path(exe).resolve().parent))
+        finally:
+            out.close()
+            if dll_dir:
+                try:
+                    import ctypes
+                    ctypes.windll.kernel32.SetDllDirectoryW(dll_dir)
+                except Exception:
+                    pass
+        self.out_path = out_path
         if sys.platform == "win32":
             _raise_priority(self.proc)
             _kill_with_parent(self.proc)
@@ -290,12 +332,19 @@ class Receiver:
         self.on_event("state", "running")
 
     def _read(self, proc: subprocess.Popen):
+        import time as _t
         buf = b""
-        stream = proc.stdout
+        stream = open(self.out_path, "rb")
         while True:
-            chunk = stream.read1(4096)
+            chunk = stream.read(65536)
             if not chunk:
-                break
+                if proc.poll() is not None:
+                    chunk = stream.read(65536)
+                    if not chunk:
+                        break
+                else:
+                    _t.sleep(0.03)
+                    continue
             buf += chunk
             while b"\n" in buf:
                 raw, buf = buf.split(b"\n", 1)
@@ -307,6 +356,7 @@ class Receiver:
                 except Exception:          # never let one bad line stop reading (the pipe would fill up)
                     import logging
                     logging.getLogger("imirror").exception("receiver line %r", line[:200])
+        stream.close()
         code = proc.wait()
         if proc is self.proc:
             self.info = StreamInfo()
