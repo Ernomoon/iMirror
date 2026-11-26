@@ -3,9 +3,6 @@ name: build
 on:
   push:
     branches: [main]
-    tags: ["v*"]
-  release:
-    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -84,12 +81,20 @@ jobs:
 
       - name: Version
         id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "${{ github.event.release.tag_name }}"
-          if (-not $tag -and $env:GITHUB_REF -like "refs/tags/v*") { $tag = $env:GITHUB_REF_NAME }
-          if ($tag) { $v = $tag.TrimStart("v") } else { $v = "2.0.0-dev.$env:GITHUB_RUN_NUMBER" }
+          $base = (Get-Content VERSION -Raw).Trim()
+          $publish = "false"
+          if ($env:GITHUB_REF -eq "refs/heads/main") {
+            gh release view "v$base" --repo $env:GITHUB_REPOSITORY *> $null
+            if ($LASTEXITCODE -ne 0) { $publish = "true" }
+          }
+          $global:LASTEXITCODE = 0
+          if ($publish -eq "true") { $v = $base } else { $v = "$base-dev.$env:GITHUB_RUN_NUMBER" }
           "version=$v" >> $env:GITHUB_OUTPUT
-          Write-Host "Version $v"
+          "publish=$publish" >> $env:GITHUB_OUTPUT
+          Write-Host "Version $v, publish release: $publish"
 
       - name: Fetch and patch UxPlay
         run: |
@@ -179,11 +184,12 @@ jobs:
           path: dist/iMirror-Setup-*.exe
 
       - name: Publish release
-        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
+        if: steps.ver.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name || github.ref_name }}
+          tag_name: v${{ steps.ver.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: iMirror ${{ steps.ver.outputs.version }}
           files: dist/iMirror-Setup-*.exe
-          body: |
-            Скачайте **iMirror-Setup-${{ steps.ver.outputs.version }}.exe** ниже и запустите.
-            Установщик сам добавит правила брандмауэра и, если нужно, Microsoft Edge WebView2.
+          make_latest: true
+          body_path: packaging/release-notes.md
