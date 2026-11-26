@@ -96,6 +96,71 @@ def patch_mdns(root: Path) -> None:
     print("[patch_uxplay] patched", path)
 
 
+HANG_DIAG = r"""/* IMIRROR_PATCH: start-up hang diagnostics (Windows). If the receiver has not reached
+ * service registration within 8 s, print the stage reached and every thread's stack
+ * (module+offset) with raw WriteFile, so even a stuck CRT stdout lock cannot hide it. */
+static volatile const char *imirror_stage = "main";
+static volatile int imirror_registered = 0;
+#ifdef _WIN32
+#include <tlhelp32.h>
+static void imirror_out(const char *fmt, ...) {
+    char buf[1024]; va_list ap; va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap); va_end(ap);
+    if (n < 0) return;
+    if (n > (int) sizeof(buf)) n = sizeof(buf);
+    DWORD w; WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), buf, (DWORD) n, &w, NULL);
+}
+static void imirror_dump_thread(DWORD tid) {
+    DWORD64 pcs[32]; int n = 0;
+    HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, tid);
+    if (!h) return;
+    if (SuspendThread(h) != (DWORD) -1) {
+        CONTEXT ctx; memset(&ctx, 0, sizeof(ctx)); ctx.ContextFlags = CONTEXT_FULL;
+        if (GetThreadContext(h, &ctx)) {
+            for (; n < 32 && ctx.Rip; n++) {
+                pcs[n] = ctx.Rip;
+                DWORD64 base = 0;
+                PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(ctx.Rip, &base, NULL);
+                if (!f) { ctx.Rip = *(DWORD64 *) ctx.Rsp; ctx.Rsp += 8; continue; }
+                PVOID hd = NULL; DWORD64 ef = 0;
+                RtlVirtualUnwind(0, base, ctx.Rip, f, &ctx, &hd, &ef, NULL);
+            }
+        }
+        ResumeThread(h);
+    }
+    CloseHandle(h);
+    imirror_out("IMIRROR_HANG thread %lu:", (unsigned long) tid);
+    for (int i = 0; i < n; i++) imirror_out(" %llx", (unsigned long long) pcs[i]);
+    imirror_out("\n");
+}
+static void *imirror_watchdog(void *) {
+    for (int i = 0; i < 80 && !imirror_registered; i++) Sleep(100);
+    if (imirror_registered) return NULL;
+    imirror_out("IMIRROR_HANG stage=%s\n", (const char *) imirror_stage);
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        MODULEENTRY32 me; me.dwSize = sizeof(me);
+        for (BOOL ok = Module32First(snap, &me); ok; ok = Module32Next(snap, &me))
+            imirror_out("IMIRROR_HANG module %llx %lx %s\n", (unsigned long long) (uintptr_t) me.modBaseAddr,
+                        (unsigned long) me.modBaseSize, me.szModule);
+        CloseHandle(snap);
+    }
+    DWORD self = GetCurrentThreadId(), pid = GetCurrentProcessId();
+    snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        THREADENTRY32 te; te.dwSize = sizeof(te);
+        for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te))
+            if (te.th32OwnerProcessID == pid && te.th32ThreadID != self) imirror_dump_thread(te.th32ThreadID);
+        CloseHandle(snap);
+    }
+    imirror_out("IMIRROR_HANG end\n");
+    return NULL;
+}
+#endif
+
+static void log(int level, const char* format, ...) {"""
+
+
 def main() -> None:
     if len(sys.argv) != 2:
         sys.exit(__doc__)
@@ -159,6 +224,27 @@ def main() -> None:
         "    setvbuf(stderr, NULL, _IONBF, 0);\n",
         "unbuffered stdout")
 
+    src = replace_once(src, "static void log(int level, const char* format, ...) {", HANG_DIAG, "hang diagnostics")
+    src = replace_once(
+        src,
+        "    setvbuf(stderr, NULL, _IONBF, 0);\n",
+        "    setvbuf(stderr, NULL, _IONBF, 0);\n"
+        "#ifdef _WIN32\n    { pthread_t wd; pthread_create(&wd, NULL, imirror_watchdog, NULL); pthread_detach(wd); }\n#endif\n",
+        "start watchdog")
+    for anchor, stage in (
+            ("    if (start_dnssd(server_hw_addr, server_name)) {\n", "start_dnssd"),
+            ("    raop_start_httpd(raop, &raop_port);\n", "raop_start_httpd"),
+            ("    raop_set_port(raop, raop_port);\n", "raop_set_port"),
+            ("    if (hls_support) {\n        raop_set_lang(", "after_raop_server")):
+        src = replace_once(src, anchor, f"    imirror_stage = \"{stage}\";\n" + anchor, "stage " + stage)
+    src = replace_once(
+        src,
+        "    if (dnssd) {\n        raop_set_dnssd(raop, dnssd);\n",
+        "    imirror_stage = \"raop_set_dnssd\";\n    if (dnssd) {\n        raop_set_dnssd(raop, dnssd);\n"
+        "        imirror_stage = \"raop_set_dnssd_done\";\n",
+        "stage dnssd")
+
+
     src = replace_once(
         src,
         "    if (register_dnssd()) {\n",
@@ -166,6 +252,12 @@ def main() -> None:
         "    if (register_dnssd()) {\n"
         "        printf(\"IMIRROR_STAGE register_failed\\n\"); fflush(stdout);\n",
         "register stage")
+
+    src = replace_once(
+        src,
+        "    if (register_dnssd()) {\n",
+        "    imirror_stage = \"before_register\";\n    imirror_registered = 1;\n    if (register_dnssd()) {\n",
+        "registered flag")
 
     path.write_text(src, encoding="utf-8", newline="\n")
     print("[patch_uxplay] patched", path)

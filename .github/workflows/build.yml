@@ -225,6 +225,13 @@ jobs:
             applogs/
       - uses: actions/upload-artifact@v4
         with:
+          name: uxplay-symbols
+          path: |
+            build/UxPlay/build/uxplay.exe
+            dist-receiver/bin/uxplay.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
           name: iMirror-Setup
           path: dist/iMirror-Setup-*.exe
 
