@@ -50,7 +50,7 @@ def main(uxplay):
     print("announce on:", addrs)
 
     env = receiver_env(uxplay)          # bundled GStreamer + IMIRROR_EXTERNAL_MDNS=1
-    proc = subprocess.Popen([uxplay, "-n", "iMirror Test", "-nh", "-vs", "fakesink", "-as", "0", "-p", "47000"],
+    proc = subprocess.Popen([uxplay, "-n", "iMirror Test", "-nh", "-vs", "fakesink", "-as", "0"],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
     events = []
     ready = threading.Event()
