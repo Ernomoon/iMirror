@@ -43,7 +43,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: ui-screenshots, path: shots/ }
       - uses: actions/cache@v4
-        with: { path: ~/.platformio, key: pio-${{ hashFiles('firmware/platformio.ini') }} }
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('firmware/platformio.ini') }}
       - name: Firmware builds (ESP32, S3, C3)
         run: pip install -q platformio && cd firmware && pio run
 
