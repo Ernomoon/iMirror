@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -83,7 +85,9 @@ jobs:
       - name: Version
         id: ver
         run: |
-          if ($env:GITHUB_REF -like "refs/tags/v*") { $v = $env:GITHUB_REF_NAME.Substring(1) } else { $v = "2.0.0-dev.$env:GITHUB_RUN_NUMBER" }
+          $tag = "${{ github.event.release.tag_name }}"
+          if (-not $tag -and $env:GITHUB_REF -like "refs/tags/v*") { $tag = $env:GITHUB_REF_NAME }
+          if ($tag) { $v = $tag.TrimStart("v") } else { $v = "2.0.0-dev.$env:GITHUB_RUN_NUMBER" }
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "Version $v"
 
@@ -175,11 +179,11 @@ jobs:
           path: dist/iMirror-Setup-*.exe
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.release.tag_name || github.ref_name }}
           files: dist/iMirror-Setup-*.exe
-          generate_release_notes: true
           body: |
             Скачайте **iMirror-Setup-${{ steps.ver.outputs.version }}.exe** ниже и запустите.
             Установщик сам добавит правила брандмауэра и, если нужно, Microsoft Edge WebView2.
