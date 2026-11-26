@@ -112,9 +112,6 @@ jobs:
       - name: Unit tests on Windows
         run: python tests/test_all.py
 
-      - name: Bluetooth control (WinRT HID over GATT) smoke test
-        run: python packaging/smoke_ble.py
-
       - name: Discovery end-to-end on Windows - built-in Windows DNS-SD (like iPhoneMirror)
         env:
           IMIRROR_MDNS_METHOD: native
@@ -124,6 +121,9 @@ jobs:
         env:
           IMIRROR_MDNS_METHOD: zeroconf
         run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
+
+      - name: Bluetooth control (WinRT HID over GATT) smoke test
+        run: python packaging/smoke_ble.py
 
       - name: PyInstaller
         run: pyinstaller --noconfirm --distpath dist --workpath build/pyi packaging/imirror.spec

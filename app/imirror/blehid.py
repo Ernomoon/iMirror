@@ -99,7 +99,7 @@ def make_buffer(data: bytes):
     """bytes -> Windows IBuffer."""
     from winrt.windows.storage.streams import DataWriter
     w = DataWriter()
-    w.write_bytes(list(data))
+    w.write_bytes(bytes(data))
     return w.detach_buffer()
 
 
