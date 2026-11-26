@@ -148,7 +148,9 @@ class Host:
         Path("selftest-result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps(result, ensure_ascii=False))
         self.exit_code = 0 if ok and "error" not in result else 1
+        log.info("selftest done %s, closing window", self.exit_code)
         self.window.destroy()
+        log.info("window.destroy() returned")
 
     def run(self):
         import webview
@@ -187,6 +189,10 @@ def main():
         from . import win32
         win32.enable_dpi_awareness()
     sys.setswitchinterval(0.001)
+    if "--selftest" in sys.argv:
+        import faulthandler
+        stacks = open(path.parent / "stacks.txt", "w", encoding="utf-8")
+        faulthandler.dump_traceback_later(100, repeat=False, file=stacks)
     host = Host(selftest="--selftest" in sys.argv)
     code = host.run()
     log.info("exit %s", code)

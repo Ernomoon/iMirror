@@ -154,6 +154,12 @@ jobs:
           Get-Content installed-test\selftest-result.json
           if ($p.ExitCode -ne 0) { throw "installed self-test failed" }
 
+      - name: Collect app logs
+        if: always()
+        run: |
+          New-Item -ItemType Directory -Force applogs | Out-Null
+          Copy-Item "$env:LOCALAPPDATA\iMirror\*.log", "$env:LOCALAPPDATA\iMirror\stacks.txt" applogs -ErrorAction SilentlyContinue
+          Get-ChildItem applogs | ForEach-Object { "== $($_.Name)"; Get-Content $_.FullName -Tail 80 }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -162,6 +168,7 @@ jobs:
             selftest-result.json
             selftest-ui.png
             installed-test/
+            applogs/
       - uses: actions/upload-artifact@v4
         with:
           name: iMirror-Setup
