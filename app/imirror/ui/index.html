@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iMirror</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="booting">
+<div class="sky" aria-hidden="true"><i class="blob b1"></i><i class="blob b2"></i><i class="blob b3"></i><i class="grain"></i></div>
+
+<header class="titlebar pywebview-drag-region">
+  <div class="lights">
+    <button class="light close" data-win="close" aria-label="Закрыть"></button>
+    <button class="light min" data-win="minimize" aria-label="Свернуть"></button>
+    <button class="light max" data-win="toggle_maximize" aria-label="Развернуть"></button>
+  </div>
+  <div class="brand"><span class="logo" aria-hidden="true"></span>iMirror</div>
+  <div class="pill" id="statusPill"><i class="dot"></i><span data-bind="pill">Запуск…</span></div>
+</header>
+
+<main class="shell">
+  <!-- ===================== live device ===================== -->
+  <section class="stage" aria-label="iPhone">
+    <div class="device-wrap" id="deviceWrap">
+      <div class="halo" aria-hidden="true"></div>
+      <div class="device" id="device" data-state="off">
+        <div class="island" aria-hidden="true"></div>
+        <div class="screen">
+          <div class="waves" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <div class="burst" aria-hidden="true"></div>
+          <div class="screen-content">
+            <div class="scr scr-off">
+              <svg class="ico-lg" viewBox="0 0 48 48"><rect x="8" y="10" width="32" height="22" rx="3"/><path d="M17 38h14M24 32v6"/></svg>
+              <p class="scr-title">Приёмник выключен</p>
+              <p class="scr-sub">Запустите его, и iPhone увидит компьютер в «Повторе экрана»</p>
+            </div>
+            <div class="scr scr-wait">
+              <svg class="ico-lg airplay" viewBox="0 0 48 48"><path d="M12 32H9a3 3 0 0 1-3-3V11a3 3 0 0 1 3-3h30a3 3 0 0 1 3 3v18a3 3 0 0 1-3 3h-3"/><path d="M24 28l9 12H15z"/></svg>
+              <p class="scr-title">Ждём iPhone</p>
+              <ol class="steps">
+                <li>Откройте Пункт управления</li>
+                <li>Нажмите «Повтор экрана»</li>
+                <li>Выберите <b data-bind="name">iMirror</b></li>
+              </ol>
+            </div>
+            <div class="scr scr-live">
+              <div class="live-fps"><span data-bind="fps">0</span><small>к/с</small></div>
+              <canvas class="spark" id="spark" width="220" height="64"></canvas>
+              <p class="scr-sub"><span data-bind="res">—</span></p>
+            </div>
+            <div class="scr scr-cap">
+              <svg class="ico-lg" viewBox="0 0 48 48"><path d="M17 6l20 20-9 2 5 11-5 2-5-11-6 7z"/></svg>
+              <p class="scr-title">Управление на iPhone</p>
+              <p class="scr-sub">Вернуть мышь компьютеру: <b data-bind="hotkey">Правый Ctrl</b></p>
+            </div>
+          </div>
+        </div>
+        <div class="glare" aria-hidden="true"></div>
+      </div>
+      <div class="floor" aria-hidden="true"></div>
+    </div>
+
+    <div class="stage-actions">
+      <button class="cta" id="mainCta"><span class="cta-glow" aria-hidden="true"></span><span data-bind="cta">Запустить приёмник</span></button>
+      <div class="mini-actions">
+        <button class="icon-btn" data-act="fit" title="Подогнать окно видео под экран"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        <button class="icon-btn" data-act="fullscreen" title="Окно видео на весь экран"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 12h8"/></svg></button>
+        <button class="icon-btn" data-act="capture" title="Передать мышь и клавиатуру iPhone"><svg viewBox="0 0 24 24"><path d="M7 3l12 12-6 1 3 6-3 1-3-6-3 4z"/></svg></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== pages ===================== -->
+  <section class="panel">
+    <nav class="seg nav" id="nav" role="tablist">
+      <i class="seg-thumb" aria-hidden="true"></i>
+      <button role="tab" data-nav="screen" class="on">Экран</button>
+      <button role="tab" data-nav="control">Управление</button>
+      <button role="tab" data-nav="network">Сеть</button>
+      <button role="tab" data-nav="settings">Настройки</button>
+    </nav>
+
+    <div class="pages">
+      <!-- Экран -->
+      <article class="page on" data-page="screen">
+        <h1 class="h-display">Картинка с iPhone</h1>
+        <p class="lead">Цифры ниже — то, что iPhone присылает на самом деле, а не то, что запрошено.</p>
+        <div class="metrics">
+          <div class="metric wide">
+            <span class="m-label">Разрешение потока</span>
+            <span class="m-value" data-bind="resBig">—</span>
+            <span class="m-foot" data-bind="requested">запрошено —</span>
+          </div>
+          <div class="metric">
+            <span class="m-label">Кадры в секунду</span>
+            <span class="m-value"><span data-bind="fps">0</span></span>
+            <span class="m-foot">пик <span data-bind="peak">0</span></span>
+          </div>
+          <div class="metric">
+            <span class="m-label">Поток</span>
+            <span class="m-value"><span data-bind="mbps">0</span><small> Мбит/с</small></span>
+            <span class="m-foot" data-bind="codec">кодек —</span>
+          </div>
+        </div>
+        <p class="note">На статичной картинке iPhone почти не шлёт кадров. Чтобы увидеть максимум, прокрутите ленту или включите видео. Захват экрана iOS ограничен 60 к/с; iMirror запрашивает 120, чтобы взять всё, что отдаст iPhone.</p>
+
+        <h2 class="h-sect">Качество</h2>
+        <div class="choice" id="presetChoice"></div>
+
+        <h2 class="h-sect">Окно и звук</h2>
+        <div class="list">
+          <label class="row"><span><b>H.265 / HEVC</b><em>Нужен для разрешения выше 1080p</em></span><input type="checkbox" class="switch" data-cfg="h265"></label>
+          <label class="row"><span><b>Минимальная задержка</b><em>Видео сразу, без подстройки под звук. Лучше для управления</em></span><input type="checkbox" class="switch" data-cfg="low_latency"></label>
+          <label class="row"><span><b>Звук с iPhone</b><em>Играет через динамики компьютера</em></span><input type="checkbox" class="switch" data-cfg="audio"></label>
+          <label class="row"><span><b>Окно видео поверх всех окон</b></span><input type="checkbox" class="switch" data-cfg="always_on_top"></label>
+          <label class="row"><span><b>Подгонять окно под экран</b><em>Каждый раз, когда iPhone меняет ориентацию</em></span><input type="checkbox" class="switch" data-cfg="auto_fit"></label>
+        </div>
+      </article>
+
+      <!-- Управление -->
+      <article class="page" data-page="control">
+        <h1 class="h-display">Управлять iPhone с компьютера</h1>
+        <p class="lead">Компьютер подключается к iPhone как Bluetooth-мышь и клавиатура. Клик — это тап, протягивание — свайп, колесо — прокрутка.</p>
+
+        <div class="seg small" id="transportSeg">
+          <i class="seg-thumb" aria-hidden="true"></i>
+          <button data-transport="ble">Bluetooth компьютера</button>
+          <button data-transport="esp32">Плата ESP32</button>
+        </div>
+
+        <ol class="checklist" id="checklist">
+          <li data-check="ready"><i></i><div><b data-bind="chkReadyTitle">Bluetooth компьютера</b><em data-bind="chkReady">Включаю…</em></div></li>
+          <li data-check="phone"><i></i><div><b>Подключите iPhone</b><em>Настройки → Bluetooth → выберите этот компьютер в разделе «Другие устройства»</em></div></li>
+          <li data-check="assist"><i></i><div><b>Включите указатель</b><em>Настройки → Универсальный доступ → Касание → AssistiveTouch</em></div></li>
+        </ol>
+
+        <div class="esp-only">
+          <div class="field-row">
+            <select id="portSelect" aria-label="COM-порт"></select>
+            <button class="btn" id="portRefresh">Обновить</button>
+            <button class="btn primary" id="portConnect">Подключить плату</button>
+          </div>
+        </div>
+
+        <h2 class="h-sect">Режим</h2>
+        <div class="choice three" id="modeChoice">
+          <button data-mode="off"><b>Выключено</b><em>Мышь только у компьютера</em></button>
+          <button data-mode="capture"><b>Захват</b><em>Клик по окну iPhone, и мышь с клавиатурой переходят к нему</em></button>
+          <button data-mode="tap"><b>Клик = тап</b><em>Тап там, где кликнули. Нужна калибровка</em></button>
+        </div>
+
+        <h2 class="h-sect">Кнопки iPhone</h2>
+        <div class="actions">
+          <button data-iact="home"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9H4z"/></svg>Домой</button>
+          <button data-iact="switcher"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="7" height="12" rx="2"/><rect x="14" y="6" width="7" height="12" rx="2"/></svg>Приложения</button>
+          <button data-iact="control_center"><svg viewBox="0 0 24 24"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><path d="M14 8h6M4 16h6"/></svg>Пункт управления</button>
+          <button data-iact="notifications"><svg viewBox="0 0 24 24"><path d="M6 17V11a6 6 0 0 1 12 0v6l2 2H4z"/><path d="M10 21h4"/></svg>Уведомления</button>
+          <button data-iact="screenshot"><svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/></svg>Снимок экрана</button>
+          <button data-iact="lock"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>Блокировка</button>
+          <button data-media="vol_down"><svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10z"/><path d="M17 12h4"/></svg>Тише</button>
+          <button data-media="vol_up"><svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10z"/><path d="M17 12h4M19 10v4"/></svg>Громче</button>
+          <button data-media="play"><svg viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></svg>Пауза</button>
+        </div>
+        <p class="note">«Домой», «Приложения» и другие действия — это дополнительные кнопки мыши. Назначьте их один раз: AssistiveTouch → Устройства → этот компьютер или iMirror Remote → Настроить дополнительные кнопки. iOS попросит нажать кнопку: нажмите её здесь.</p>
+
+        <h2 class="h-sect">Текст на iPhone</h2>
+        <div class="compose">
+          <textarea id="typeText" rows="2" placeholder="Напишите здесь, iMirror напечатает это на iPhone"></textarea>
+          <div class="compose-actions">
+            <button class="btn" id="typeClip">Из буфера обмена</button>
+            <button class="btn primary" id="typeSend">Напечатать</button>
+          </div>
+        </div>
+
+        <h2 class="h-sect">Точность</h2>
+        <div class="list">
+          <div class="row"><span><b>Скорость указателя</b></span><input type="range" min="0.2" max="4" step="0.05" data-cfg="sensitivity"><output data-bind="sens"></output></div>
+          <div class="row"><span><b>Прокрутка</b></span><input type="range" min="0.25" max="4" step="0.05" data-cfg="wheel_multiplier"><output data-bind="wheel"></output></div>
+          <label class="row"><span><b>Ctrl работает как ⌘</b><em>Ctrl+C, Ctrl+V, Ctrl+Z — как на компьютере</em></span><input type="checkbox" class="switch" data-cfg="swap_ctrl_cmd"></label>
+          <label class="row"><span><b>Обратная прокрутка</b></span><input type="checkbox" class="switch" data-cfg="invert_wheel"></label>
+          <div class="row"><span><b>Калибровка для «клик = тап»</b><em data-bind="calibState">Не выполнена</em></span><button class="btn" id="calibBtn">Калибровать</button></div>
+        </div>
+      </article>
+
+      <!-- Сеть -->
+      <article class="page" data-page="network">
+        <h1 class="h-display">Как iPhone находит компьютер</h1>
+        <p class="lead">iMirror объявляет себя в каждой реальной сети компьютера. VPN и виртуальные адаптеры пропускаются: через них iPhone до приёмника не достучится.</p>
+        <div class="announce" id="announce">
+          <div class="announce-ring" aria-hidden="true"><i></i><i></i></div>
+          <div><b data-bind="mdnsTitle">Объявление не запущено</b><em data-bind="mdnsSub">Запустите приёмник</em></div>
+          <button class="btn" data-act="reannounce">Объявить заново</button>
+        </div>
+        <h2 class="h-sect">Сетевые адаптеры</h2>
+        <div class="adapters" id="adapters"></div>
+        <h2 class="h-sect">Если iPhone всё равно не видит</h2>
+        <ul class="tips">
+          <li>iPhone и компьютер должны быть в одной Wi-Fi-сети, без «гостевого режима» и «изоляции клиентов» в роутере.</li>
+          <li>Сеть Windows должна быть «Частной»: Параметры → Сеть и Интернет → свойства подключения.</li>
+          <li>Отключите VPN на iPhone. На компьютере VPN можно не выключать, если выше выбран нужный адаптер.</li>
+          <li>Для 4K подойдёт Wi-Fi 5 или 6 ГГц, а компьютер лучше подключить к роутеру кабелем.</li>
+        </ul>
+      </article>
+
+      <!-- Настройки -->
+      <article class="page" data-page="settings">
+        <h1 class="h-display">Настройки</h1>
+        <h2 class="h-sect">Свои параметры потока</h2>
+        <div class="grid4">
+          <label class="field"><span>Ширина</span><input type="number" data-cfg="width" min="1" max="9999"></label>
+          <label class="field"><span>Высота</span><input type="number" data-cfg="height" min="1" max="9999"></label>
+          <label class="field"><span>Частота экрана, Гц</span><input type="number" data-cfg="refresh" min="1" max="255"></label>
+          <label class="field"><span>Кадров в секунду</span><input type="number" data-cfg="max_fps" min="1" max="255"></label>
+        </div>
+        <div class="grid3">
+          <label class="field"><span>Имя в «Повторе экрана»</span><input type="text" data-cfg="server_name" maxlength="40"></label>
+          <label class="field"><span>PIN (4 цифры, необязательно)</span><input type="text" data-cfg="pin" maxlength="4" inputmode="numeric"></label>
+          <label class="field"><span>Вывод видео</span><select data-cfg="video_sink" id="sinkSelect"></select></label>
+        </div>
+        <div class="list">
+          <label class="row"><span><b>Программное декодирование</b><em>Если видео не появляется или идёт с артефактами</em></span><input type="checkbox" class="switch" data-cfg="software_decode"></label>
+          <div class="row"><span><b>Вернуть мышь компьютеру</b></span><select data-cfg="release_hotkey" id="hotkeySelect"></select></div>
+          <label class="row"><span><b>Меньше движения</b><em>Отключает фоновые анимации</em></span><input type="checkbox" class="switch" data-cfg="reduce_motion"></label>
+        </div>
+        <h2 class="h-sect">Плата ESP32</h2>
+        <p class="note">Нужна, только если у компьютера нет Bluetooth или Windows не даёт ему работать мышью. Подключите плату по USB, выберите порт на вкладке «Управление» и прошейте её один раз.</p>
+        <div class="field-row">
+          <select id="chipSelect" aria-label="Чип"></select>
+          <button class="btn" id="flashBtn">Прошить плату</button>
+          <button class="btn" data-act="unpair">Забыть iPhone</button>
+        </div>
+        <h2 class="h-sect">Журнал</h2>
+        <pre class="log" id="log"></pre>
+      </article>
+    </div>
+  </section>
+</main>
+
+<div class="overlay" id="calibOverlay" hidden>
+  <div class="sheet">
+    <div class="calib-dots"><i></i><i></i><i></i></div>
+    <h2>Покажите, где указатель</h2>
+    <p>Указатель на iPhone сдвинулся. Кликните в центр серого кружка на картинке iPhone. Мышь iPhone в это время не трогайте.</p>
+    <button class="btn" id="calibCancel">Отменить</button>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

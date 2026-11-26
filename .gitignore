@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+build/
+dist/
+dist-receiver/
+shots/
+selftest-*
+tests/host/harness
+tests/host/harness.exe
+firmware/.pio/

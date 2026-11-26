@@ -1,0 +1,174 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  UXPLAY_COMMIT: 566f3460e3cbb16c2c33a7ac607d3d2d0dd09b14   # UxPlay 1.74, verified with receiver/patch_uxplay.py
+
+jobs:
+  linux:
+    name: Tests, firmware, UI screenshots
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: System packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libplist-dev libssl-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good cmake ninja-build g++
+      - name: Build patched UxPlay
+        run: |
+          git clone -q https://github.com/FDH2/UxPlay.git /tmp/UxPlay
+          git -C /tmp/UxPlay checkout -q "$UXPLAY_COMMIT"
+          python receiver/patch_uxplay.py /tmp/UxPlay
+          cmake -S /tmp/UxPlay -B /tmp/UxPlay/build -G Ninja && ninja -C /tmp/UxPlay/build
+      - run: pip install -q pyserial zeroconf ifaddr playwright
+      - name: Unit tests (firmware twin, tap accuracy, protocol, core)
+        run: python tests/test_all.py
+      - name: Input-capture logic
+        run: python tests/test_capture_logic.py
+      - name: Discovery end-to-end (announce -> browse like an iPhone -> GET /info)
+        run: python tests/test_discovery.py /tmp/UxPlay/build/uxplay
+      - name: UI screenshots
+        run: python tests/ui_shots.py "$(which google-chrome)" shots
+      - uses: actions/upload-artifact@v4
+        with: { name: ui-screenshots, path: shots/ }
+      - uses: actions/cache@v4
+        with: { path: ~/.platformio, key: pio-${{ hashFiles('firmware/platformio.ini') }} }
+      - name: Firmware builds (ESP32, S3, C3)
+        run: pip install -q platformio && cd firmware && pio run
+
+  windows:
+    name: Windows build, tests and installer
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-libplist
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-gstreamer
+            mingw-w64-ucrt-x86_64-gst-plugins-base
+            mingw-w64-ucrt-x86_64-gst-plugins-good
+            mingw-w64-ucrt-x86_64-gst-plugins-bad
+            mingw-w64-ucrt-x86_64-gst-libav
+
+      - name: Version
+        id: ver
+        run: |
+          if ($env:GITHUB_REF -like "refs/tags/v*") { $v = $env:GITHUB_REF_NAME.Substring(1) } else { $v = "2.0.0-dev.$env:GITHUB_RUN_NUMBER" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Version $v"
+
+      - name: Fetch and patch UxPlay
+        run: |
+          git clone -q https://github.com/FDH2/UxPlay.git build/UxPlay
+          git -C build/UxPlay checkout -q $env:UXPLAY_COMMIT
+          python receiver/patch_uxplay.py build/UxPlay
+
+      - name: Build UxPlay and bundle the receiver
+        shell: msys2 {0}
+        run: |
+          cmake -S build/UxPlay -B build/UxPlay/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          ninja -C build/UxPlay/build
+          bash packaging/bundle_receiver.sh build/UxPlay/build/uxplay.exe dist-receiver
+
+      - name: Python packages
+        run: |
+          python -m pip install -q --upgrade pip
+          python -m pip install -q -r app/requirements.txt pyinstaller
+
+      - name: Receiver bundle works in isolation
+        run: python packaging/verify_receiver.py dist-receiver
+
+      - name: Unit tests on Windows
+        run: |
+          $env:PATH = "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin;$env:PATH"
+          python tests/test_all.py
+          python tests/test_capture_logic.py
+
+      - name: Discovery end-to-end on Windows
+        run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
+
+      - name: Built-in Bluetooth (WinRT HID over GATT) smoke test
+        run: python packaging/smoke_ble.py
+
+      - name: PyInstaller
+        run: pyinstaller --noconfirm --distpath dist --workpath build/pyi packaging/imirror.spec
+
+      - name: Self-test of the built app (window + JS bridge + core)
+        run: |
+          $p = Start-Process dist/iMirror/iMirror.exe -ArgumentList "--selftest" -WorkingDirectory $PWD -PassThru
+          if (-not $p.WaitForExit(150000)) { Stop-Process $p -Force; throw "self-test timed out" }
+          Get-Content selftest-result.json
+          if ($p.ExitCode -ne 0) { throw "self-test failed ($($p.ExitCode))" }
+
+      - name: Installer (Inno Setup)
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc /Q "/DAppVersion=${{ steps.ver.outputs.version }}" packaging\imirror.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          Get-ChildItem dist\iMirror-Setup-*.exe | ForEach-Object { "{0}  {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+
+      - name: Install silently and self-test the installed app
+        run: |
+          $setup = (Get-ChildItem dist\iMirror-Setup-*.exe)[0].FullName
+          $i = Start-Process $setup -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-" -PassThru -Wait
+          if ($i.ExitCode -ne 0) { throw "installer exit $($i.ExitCode)" }
+          $app = "$env:ProgramFiles\iMirror"
+          foreach ($f in "iMirror.exe", "receiver\bin\uxplay.exe", "receiver\lib\gstreamer-1.0\libgstd3d11.dll", "firmware_bin\imirror-esp32.bin") {
+            if (-not (Test-Path "$app\$f")) { throw "missing after install: $f" }
+          }
+          netsh advfirewall firewall show rule name="iMirror AirPlay" | Select-String "Enabled|Program"
+          New-Item -ItemType Directory -Force installed-test | Out-Null
+          $p = Start-Process "$app\iMirror.exe" -ArgumentList "--selftest" -WorkingDirectory "$PWD\installed-test" -PassThru
+          if (-not $p.WaitForExit(150000)) { Stop-Process $p -Force; throw "installed self-test timed out" }
+          Get-Content installed-test\selftest-result.json
+          if ($p.ExitCode -ne 0) { throw "installed self-test failed" }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest
+          path: |
+            selftest-result.json
+            selftest-ui.png
+            installed-test/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iMirror-Setup
+          path: dist/iMirror-Setup-*.exe
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/iMirror-Setup-*.exe
+          generate_release_notes: true
+          body: |
+            Скачайте **iMirror-Setup-${{ steps.ver.outputs.version }}.exe** ниже и запустите.
+            Установщик сам добавит правила брандмауэра и, если нужно, Microsoft Edge WebView2.
