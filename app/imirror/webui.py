@@ -146,7 +146,7 @@ class Host:
             result["error"] = repr(e)
             ok = False
         Path("selftest-result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(json.dumps(result, ensure_ascii=False))
+        log.info("selftest result %s", json.dumps(result, ensure_ascii=False))
         self.exit_code = 0 if ok and "error" not in result else 1
         log.info("selftest done %s, closing window", self.exit_code)
         self.window.destroy()
@@ -182,7 +182,22 @@ class Host:
         return self.exit_code
 
 
+def _safe_stdio():
+    """Windowed .exe: stdout/stderr may be None or a cp1252 pipe; never let output crash a thread."""
+    import io
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name)
+        if stream is None:
+            setattr(sys, name, io.StringIO())
+        else:
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, ValueError, OSError):
+                pass
+
+
 def main():
+    _safe_stdio()
     path = _setup_logging()
     log.info("iMirror start %s, log %s", sys.argv, path)
     if sys.platform == "win32":
