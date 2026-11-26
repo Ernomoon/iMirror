@@ -135,11 +135,15 @@ jobs:
       - name: Install Apple Bonjour (the user's setup)
         run: |
           Invoke-WebRequest -UseBasicParsing "https://download.info.apple.com/Mac_OS_X/061-8098.20100603.gthyu/BonjourPSSetup.exe" -OutFile BonjourPSSetup.exe
-          $i = Start-Process .\BonjourPSSetup.exe -ArgumentList "/quiet","/norestart" -PassThru -Wait
-          "Bonjour installer exit: $($i.ExitCode)"
+          7z x BonjourPSSetup.exe -obonjour -y | Out-Null
+          Get-ChildItem bonjour | Format-Table Name, Length
+          $msi = (Get-ChildItem bonjour -Filter "Bonjour64.msi")[0].FullName
+          $i = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart /l*v bonjour-install.log" -PassThru -Wait
+          "msiexec exit: $($i.ExitCode)"
+          if ($i.ExitCode -ne 0 -and $i.ExitCode -ne 3010) { Get-Content bonjour-install.log -Tail 60; throw "Bonjour install failed" }
           sc.exe query "Bonjour Service"
           Test-Path "$env:SystemRoot\System32\dnssd.dll"
-          Get-Command dns-sd -ErrorAction SilentlyContinue | Format-List Source
+          (Get-Command dns-sd -ErrorAction SilentlyContinue).Source
 
       - name: Diagnostic - zeroconf while Bonjour owns port 5353
         continue-on-error: true
