@@ -78,14 +78,16 @@ body[data-state="cap"] .b1 { background: #8a2a55; }
 
 /* ------------------------------------------------------------ layout */
 .shell { height: calc(100% - 52px); display: grid; grid-template-columns: minmax(330px, 38%) 1fr; gap: 8px; padding: 0 18px 18px; }
-.stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px; min-height: 0; }
+.stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(26px * var(--stage-scale, 1)); min-height: 0; overflow: hidden; }
 .panel { min-height: 0; display: flex; flex-direction: column; border-radius: var(--r-xl);
   background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.035));
   border: 1px solid var(--line); backdrop-filter: blur(40px) saturate(170%);
   box-shadow: 0 30px 80px -30px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.08); overflow: clip; }
 
 /* ------------------------------------------------------------ device (the loud element) */
-.device-wrap { position: relative; perspective: 1400px; }
+.device-wrap { position: relative; perspective: 1400px; --k: var(--stage-scale, 1); width: calc(236px * var(--k)); height: calc(486px * var(--k)); }
+.device-wrap > .device { transform-origin: top left; scale: var(--k); }
+.device-wrap > .floor { bottom: calc(-34px * var(--k)); }
 .device { --mx: 50%; --my: 30%; --rx: 0deg; --ry: 0deg;
   width: 236px; height: 486px; border-radius: 52px; position: relative; padding: 10px;
   background: linear-gradient(145deg, #3a3f55, #14172a 45%, #2b2f44);

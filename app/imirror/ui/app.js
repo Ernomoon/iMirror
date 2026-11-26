@@ -334,6 +334,14 @@ document.addEventListener("DOMContentLoaded", () => {
     dev.style.setProperty("--mx", (50 + nx * 45).toFixed(1) + "%");
     dev.style.setProperty("--my", (30 + ny * 40).toFixed(1) + "%");
   });
+  // scale the device so the stage always fits the window height
+  const fitStage = () => {
+    const h = $(".stage").clientHeight;
+    const sc = Math.max(0.55, Math.min(1, (h - 150) / 520));
+    document.documentElement.style.setProperty("--stage-scale", sc.toFixed(3));
+  };
+  fitStage();
+  window.addEventListener("resize", fitStage);
   window.addEventListener("resize", () => { segSelect($("#nav"), ".on"); if (S) segSelect($("#transportSeg"), `[data-transport="${S.cfg.transport}"]`); });
   requestAnimationFrame(() => segSelect($("#nav"), '[data-nav="screen"]'));
 });

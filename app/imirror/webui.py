@@ -38,7 +38,7 @@ def _setup_logging():
 def _window_size(want_w=1180, want_h=780):
     """Fit the window into the monitor's work area (logical pixels)."""
     if sys.platform != "win32":
-        return want_w, want_h
+        return want_w, want_h, None, None
     try:
         import ctypes
         from ctypes import wintypes
@@ -47,9 +47,10 @@ def _window_size(want_w=1180, want_h=780):
         dpi = ctypes.windll.user32.GetDpiForSystem() if hasattr(ctypes.windll.user32, "GetDpiForSystem") else 96
         scale = max(dpi, 96) / 96.0
         aw, ah = (r.right - r.left) / scale, (r.bottom - r.top) / scale
-        return int(min(want_w, aw - 24)), int(min(want_h, ah - 24))
+        w, h = int(min(want_w, aw - 24)), int(min(want_h, ah - 24))
+        return w, h, int(r.left / scale + (aw - w) / 2), int(r.top / scale + (ah - h) / 2)
     except Exception:
-        return want_w, want_h
+        return want_w, want_h, None, None
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
 
@@ -154,11 +155,11 @@ class Host:
 
     def run(self):
         import webview
-        w, h = _window_size()
-        log.info("window %dx%d", w, h)
+        w, h, x, y = _window_size()
+        log.info("window %dx%d at %s,%s", w, h, x, y)
         self.window = webview.create_window(
             "iMirror", url=str(UI_DIR / "index.html"), js_api=Api(self),
-            width=w, height=h, min_size=(min(w, 900), min(h, 600)), frameless=True, easy_drag=False,
+            width=w, height=h, x=x, y=y, min_size=(min(w, 900), min(h, 600)), frameless=True, easy_drag=False,
             background_color="#07070c", text_select=False)
         threading.Thread(target=self._pusher, daemon=True).start()
         if self.selftest:
