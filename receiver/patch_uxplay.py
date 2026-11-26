@@ -43,6 +43,12 @@ extern "C" void video_process (void *cls, raop_ntp_t *ntp, video_decode_struct *
     imirror_count_frame((size_t) data->data_len);
 '''
 
+def _read(path: Path) -> str:
+    # open(newline="") keeps CRLF visible (Path.read_text(newline=) needs Python 3.13)
+    with open(path, encoding="utf-8", newline="") as f:
+        return f.read()
+
+
 def replace_once(src: str, old: str, new: str, what: str) -> str:
     n = src.count(old)
     if n != 1:
@@ -70,7 +76,7 @@ dnssd_private_init("""
 
 def patch_mdns(root: Path) -> None:
     path = root / "lib" / "mdnsd" / "dnssd_mdnsd.c"
-    src = path.read_text(encoding="utf-8", newline="").replace("\r\n", "\n")
+    src = _read(path).replace("\r\n", "\n")
     if MARK in src:
         print("[patch_uxplay] mdns already patched")
         return
@@ -93,7 +99,7 @@ def main() -> None:
         sys.exit(__doc__)
     path = Path(sys.argv[1]) / "uxplay.cpp"
     # newline="" keeps CRLF visible; normalise so anchors match even if git converted line endings
-    src = path.read_text(encoding="utf-8", newline="").replace("\r\n", "\n")
+    src = _read(path).replace("\r\n", "\n")
     if MARK in src:
         print("[patch_uxplay] already patched")
         patch_mdns(Path(sys.argv[1]))
