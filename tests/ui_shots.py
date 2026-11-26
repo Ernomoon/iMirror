@@ -13,21 +13,13 @@ async def main():
         errors = []
         pg.on("pageerror", lambda e: errors.append(str(e)))
         pg.on("console", lambda m: m.type == "error" and errors.append(m.text))
-        for mode in ["off", "wait", "cap"]:
+        for mode in ["off", "starting", "ready", "problem", "connecting", "live"]:
             await pg.goto(f"{URL}?demo={mode}")
-            await pg.wait_for_timeout(2600)
+            await pg.wait_for_timeout(2800)
             await pg.screenshot(path=str(OUT / f"state_{mode}.png"))
-        await pg.goto(f"{URL}?demo=live")
-        await pg.wait_for_timeout(1800)
-        for tab in ["control", "network", "settings"]:
-            await pg.click(f"[data-nav={tab}]")
-            await pg.wait_for_timeout(900)
-            await pg.screenshot(path=str(OUT / f"page_{tab}.png"))
-        await pg.click("[data-nav=control]"); await pg.wait_for_timeout(700)
-        await pg.click("[data-transport=esp32]"); await pg.wait_for_timeout(900)
-        await pg.screenshot(path=str(OUT / "control_esp32.png"))
-        await pg.click("[data-iact=home]"); await pg.wait_for_timeout(600)
-        await pg.screenshot(path=str(OUT / "toast.png"))
+        await pg.click("[data-nav=settings]")
+        await pg.wait_for_timeout(1200)
+        await pg.screenshot(path=str(OUT / "settings.png"))
         print("errors:", errors)
         if errors:
             sys.exit(1)

@@ -9,7 +9,6 @@ import ctypes
 import json
 import logging
 import os
-import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -54,12 +53,12 @@ def _third_party_firewalls():
     return [n for n in names if n and "windows" not in n.lower() and "microsoft" not in n.lower()]
 
 
-def _port_open(ip: str, port: int) -> bool:
-    try:
-        with socket.create_connection((ip, port), timeout=1.5):
-            return True
-    except OSError:
-        return False
+def _port_listening(port: int) -> bool:
+    """Is something LISTENING on this TCP port? (Never connect: UxPlay would count it as a client.)"""
+    if not IS_WIN:
+        return True
+    out, _ = _run(["netstat", "-ano", "-p", "TCP"])
+    return any(f":{port} " in line and ("LISTENING" in line or "ПРОСЛУШИВАНИЕ" in line) for line in out.splitlines())
 
 
 def run_checks(app_exe: str, uxplay_exe: str, receiver_running: bool, port: int, mdns_state: dict) -> list[dict]:
@@ -129,7 +128,7 @@ def run_checks(app_exe: str, uxplay_exe: str, receiver_running: bool, port: int,
 
     # 6. receiver + announcement
     if receiver_running and port:
-        listening = _port_open("127.0.0.1", port)
+        listening = _port_listening(port)
         checks.append({"id": "port", "title": "Приёмник AirPlay", "state": "ok" if listening else "bad",
                        "detail": f"Принимает подключения на порту {port}" if listening else f"Порт {port} не отвечает"})
         if mdns_state.get("ok"):
