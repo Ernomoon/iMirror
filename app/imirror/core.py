@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import collections
 import ctypes
+import logging
 import sys
 import threading
 import time
@@ -78,6 +79,7 @@ class Core:
     # ===================================================================== helpers
     def logln(self, text: str):
         self.log.append(time.strftime("%H:%M:%S ") + text)
+        logging.getLogger("imirror").info(text)
         self.on_change()
 
     def toast(self, text: str, kind: str = "info"):

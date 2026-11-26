@@ -6,10 +6,50 @@ Python -> JS: window.__imirror.push(state) at most ~12 times per second.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import sys
 import threading
 import time
 from pathlib import Path
+
+log = logging.getLogger("imirror")
+
+
+def _setup_logging():
+    base = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "iMirror"
+    base.mkdir(parents=True, exist_ok=True)
+    path = base / "imirror.log"
+    try:
+        if path.exists() and path.stat().st_size > 2_000_000:
+            path.replace(base / "imirror.old.log")
+    except OSError:
+        pass
+    logging.basicConfig(filename=str(path), level=logging.INFO, encoding="utf-8",
+                        format="%(asctime)s %(levelname)s %(threadName)s %(message)s")
+
+    def hook(exc_type, exc, tb):
+        log.error("uncaught", exc_info=(exc_type, exc, tb))
+    sys.excepthook = hook
+    threading.excepthook = lambda a: log.error("thread %s crashed", a.thread, exc_info=(a.exc_type, a.exc_value, a.exc_traceback))
+    return path
+
+
+def _window_size(want_w=1180, want_h=780):
+    """Fit the window into the monitor's work area (logical pixels)."""
+    if sys.platform != "win32":
+        return want_w, want_h
+    try:
+        import ctypes
+        from ctypes import wintypes
+        r = wintypes.RECT()
+        ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(r), 0)   # SPI_GETWORKAREA
+        dpi = ctypes.windll.user32.GetDpiForSystem() if hasattr(ctypes.windll.user32, "GetDpiForSystem") else 96
+        scale = max(dpi, 96) / 96.0
+        aw, ah = (r.right - r.left) / scale, (r.bottom - r.top) / scale
+        return int(min(want_w, aw - 24)), int(min(want_h, ah - 24))
+    except Exception:
+        return want_w, want_h
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
 
@@ -112,24 +152,45 @@ class Host:
 
     def run(self):
         import webview
+        w, h = _window_size()
+        log.info("window %dx%d", w, h)
         self.window = webview.create_window(
             "iMirror", url=str(UI_DIR / "index.html"), js_api=Api(self),
-            width=1180, height=780, min_size=(980, 660), frameless=True, easy_drag=False,
+            width=w, height=h, min_size=(min(w, 900), min(h, 600)), frameless=True, easy_drag=False,
             background_color="#07070c", text_select=False)
         threading.Thread(target=self._pusher, daemon=True).start()
         if self.selftest:
             threading.Thread(target=self._selftest, daemon=True).start()
         try:
             webview.start(gui="edgechromium" if sys.platform == "win32" else None, debug="--debug" in sys.argv)
+        except Exception:
+            log.exception("webview failed")
+            self.exit_code = self.exit_code or 2
         finally:
-            self.core.shutdown()
+            log.info("window closed, shutting down")
+            done = threading.Event()
+
+            def _shutdown():
+                try:
+                    self.core.shutdown()
+                finally:
+                    done.set()
+            threading.Thread(target=_shutdown, daemon=True).start()
+            done.wait(6)
         return self.exit_code
 
 
 def main():
+    path = _setup_logging()
+    log.info("iMirror start %s, log %s", sys.argv, path)
     if sys.platform == "win32":
         from . import win32
         win32.enable_dpi_awareness()
     sys.setswitchinterval(0.001)
     host = Host(selftest="--selftest" in sys.argv)
-    sys.exit(host.run())
+    code = host.run()
+    log.info("exit %s", code)
+    logging.shutdown()
+    # The .NET runtime behind WebView2 (pythonnet) can hang interpreter shutdown: exit hard
+    # after everything of ours has been stopped and saved.
+    os._exit(code)
