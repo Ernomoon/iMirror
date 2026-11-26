@@ -173,7 +173,7 @@ def output_log_path() -> Path:
     base = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "iMirror"
     base.mkdir(parents=True, exist_ok=True)
     for i in range(4):                 # an old receiver may still hold the file for a moment
-        p = base / (f"uxplay-output.log" if i == 0 else f"uxplay-output-{i}.log")
+        p = base / ("uxplay-output.log" if i == 0 else f"uxplay-output-{i}.log")
         try:
             with open(p, "wb"):
                 return p
@@ -263,7 +263,14 @@ class Receiver:
 
     @property
     def pid(self) -> int | None:
-        return self.proc.pid if self.running else None
+        """PID of uxplay itself (on Windows the launcher is cmd.exe)."""
+        if not self.running or self.proc is None:
+            return None
+        if sys.platform != "win32":
+            return self.proc.pid
+        if not getattr(self, "_uxpid", None):
+            self._uxpid = _child_pid(self.proc.pid)
+        return self._uxpid
 
     def start(self, cfg: dict):
         """Start UxPlay. Concurrent calls (autostart + a click) never start a second process."""
@@ -310,13 +317,21 @@ class Receiver:
             except Exception:
                 pass
         out_path = output_log_path()
-        out = open(out_path, "wb")
+        cwd = str(Path(exe).resolve().parent)
         try:
-            self.proc = subprocess.Popen(
-                args, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                env=env, creationflags=flags, cwd=str(Path(exe).resolve().parent))
+            if sys.platform == "win32":
+                # Launch exactly the way that works on the affected PC: through cmd.exe with the
+                # output redirected to a file, no priority change, no job object.
+                line = subprocess.list2cmdline(args) + f' > "{out_path}" 2>&1 < NUL'
+                self.proc = subprocess.Popen(
+                    f'"{os.environ.get("ComSpec", "cmd.exe")}" /d /s /c "{line}"',
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    env=env, creationflags=flags, cwd=cwd)
+            else:
+                with open(out_path, "wb") as out:
+                    self.proc = subprocess.Popen(args, stdout=out, stderr=subprocess.STDOUT,
+                                                 stdin=subprocess.DEVNULL, env=env, cwd=cwd)
         finally:
-            out.close()
             if dll_dir:
                 try:
                     import ctypes
@@ -324,9 +339,7 @@ class Receiver:
                 except Exception:
                     pass
         self.out_path = out_path
-        if sys.platform == "win32":
-            _raise_priority(self.proc)
-            _kill_with_parent(self.proc)
+        self._uxpid = None
         self._reader = threading.Thread(target=self._read, args=(self.proc,), daemon=True)
         self._reader.start()
         self.on_event("state", "running")
@@ -380,12 +393,47 @@ class Receiver:
     def stop(self):
         self.stopping = True
         proc = self.proc
+        if proc and proc.poll() is None and sys.platform == "win32":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True,
+                           creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            return
         if proc and proc.poll() is None:
             proc.terminate()
             try:
                 proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+
+def _child_pid(ppid: int) -> int | None:
+    import ctypes
+    from ctypes import wintypes as W
+
+    class PE(ctypes.Structure):
+        _fields_ = [("dwSize", W.DWORD), ("cntUsage", W.DWORD), ("th32ProcessID", W.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", W.DWORD), ("cntThreads", W.DWORD),
+                    ("th32ParentProcessID", W.DWORD), ("pcPriClassBase", ctypes.c_long), ("dwFlags", W.DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260)]
+    k32 = ctypes.WinDLL("kernel32")
+    k32.CreateToolhelp32Snapshot.restype = W.HANDLE
+    snap = k32.CreateToolhelp32Snapshot(2, 0)
+    if not snap or snap == W.HANDLE(-1).value:
+        return None
+    try:
+        e = PE()
+        e.dwSize = ctypes.sizeof(PE)
+        ok = k32.Process32FirstW(snap, ctypes.byref(e))
+        while ok:
+            if e.th32ParentProcessID == ppid and e.szExeFile.lower().startswith("uxplay"):
+                return int(e.th32ProcessID)
+            ok = k32.Process32NextW(snap, ctypes.byref(e))
+    finally:
+        k32.CloseHandle(snap)
+    return None
 
 
 _JOB = None
