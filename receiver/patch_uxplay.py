@@ -133,6 +133,28 @@ static void imirror_dump_thread(DWORD tid) {
     for (int i = 0; i < n; i++) imirror_out(" %llx", (unsigned long long) pcs[i]);
     imirror_out("\n");
 }
+static LONG WINAPI imirror_crash(EXCEPTION_POINTERS *ep) {
+    CONTEXT ctx = *ep->ContextRecord;
+    imirror_out("IMIRROR_CRASH code=%08lx at %llx\n", (unsigned long) ep->ExceptionRecord->ExceptionCode,
+                (unsigned long long) (uintptr_t) ep->ExceptionRecord->ExceptionAddress);
+    imirror_out("IMIRROR_CRASH stack:");
+    for (int n = 0; n < 32 && ctx.Rip; n++) {
+        HMODULE m = NULL; char name[MAX_PATH] = "?";
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               (LPCSTR) (uintptr_t) ctx.Rip, &m) && m) {
+            GetModuleFileNameA(m, name, sizeof(name));
+        }
+        const char *b = strrchr(name, '\\');
+        imirror_out(" %s+%llx", b ? b + 1 : name, (unsigned long long) (ctx.Rip - (DWORD64) (uintptr_t) m));
+        DWORD64 base = 0;
+        PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(ctx.Rip, &base, NULL);
+        if (!f) { ctx.Rip = *(DWORD64 *) ctx.Rsp; ctx.Rsp += 8; continue; }
+        PVOID hd = NULL; DWORD64 ef = 0;
+        RtlVirtualUnwind(0, base, ctx.Rip, f, &ctx, &hd, &ef, NULL);
+    }
+    imirror_out("\n");
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 static void *imirror_watchdog(void *) {
     for (int i = 0; i < 80 && !imirror_registered; i++) Sleep(100);
     if (imirror_registered) return NULL;
@@ -229,7 +251,8 @@ def main() -> None:
         src,
         "    setvbuf(stderr, NULL, _IONBF, 0);\n",
         "    setvbuf(stderr, NULL, _IONBF, 0);\n"
-        "#ifdef _WIN32\n    { pthread_t wd; pthread_create(&wd, NULL, imirror_watchdog, NULL); pthread_detach(wd); }\n#endif\n",
+        "#ifdef _WIN32\n    SetUnhandledExceptionFilter(imirror_crash);\n"
+        "    { pthread_t wd; pthread_create(&wd, NULL, imirror_watchdog, NULL); pthread_detach(wd); }\n#endif\n",
         "start watchdog")
     for anchor, stage in (
             ("    if (start_dnssd(server_hw_addr, server_name)) {\n", "start_dnssd"),
