@@ -105,8 +105,11 @@ class TestFindUxplay(unittest.TestCase):
         old.write_bytes(b"MZ plain uxplay")
         new = d / "new.exe"
         new.write_bytes(b"MZ ... IMIRROR_MDNS ...")
+        from unittest import mock
         self.assertNotEqual(find_uxplay({"uxplay_path": str(old)}), str(old))
-        self.assertEqual(find_uxplay({"uxplay_path": str(new)}), str(new))
+        with mock.patch("imirror.receiver.bundle_root", return_value=d / "none"), \
+                mock.patch("imirror.receiver.__file__", str(d / "a" / "b" / "c" / "receiver.py")):
+            self.assertEqual(find_uxplay({"uxplay_path": str(new)}), str(new))
 
 
 class TestReceiverProcess(unittest.TestCase):
