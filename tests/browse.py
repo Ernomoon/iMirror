@@ -3,7 +3,6 @@ Usage: python tests/browse.py [seconds]  -> exit 0 when an _airplay._tcp service
 import socket
 import sys
 import time
-import urllib.request
 
 from zeroconf import ServiceBrowser, Zeroconf
 
@@ -30,10 +29,16 @@ while time.time() < deadline and not ok:
     time.sleep(1)
     for name, (addrs, port, props) in list(found.items()):
         for a in addrs:
+            if ":" in a:
+                continue
             try:
-                with urllib.request.urlopen(f"http://{a}:{port}/info", timeout=5) as r:
-                    print("found", name, a, port, "GET /info ->", r.status, len(r.read()), "bytes")
-                    ok = True
+                s = socket.create_connection((a, port), timeout=5)
+                s.sendall(b"GET /info RTSP/1.0\r\nCSeq: 1\r\nUser-Agent: AirPlay/750.0\r\n\r\n")
+                s.settimeout(5)
+                head = s.recv(4096)
+                s.close()
+                print("found", name, a, port, "GET /info ->", head.split(b"\r\n")[0])
+                ok = ok or head.startswith(b"RTSP/1.0 200")
             except Exception as e:
                 print("found", name, a, port, "but /info failed:", e)
 zc.close()
