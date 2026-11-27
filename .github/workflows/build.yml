@@ -31,7 +31,7 @@ jobs:
           git clone -q https://github.com/FDH2/UxPlay.git /tmp/UxPlay
           git -C /tmp/UxPlay checkout -q "$UXPLAY_COMMIT"
           python receiver/patch_uxplay.py /tmp/UxPlay
-          cmake -S /tmp/UxPlay -B /tmp/UxPlay/build -G Ninja && ninja -C /tmp/UxPlay/build
+          cmake -S /tmp/UxPlay -B /tmp/UxPlay/build -G Ninja -DNO_MARCH_NATIVE=ON && ninja -C /tmp/UxPlay/build
       - run: pip install -q zeroconf ifaddr playwright
       - name: Unit tests
         run: python tests/test_all.py
@@ -97,8 +97,12 @@ jobs:
       - name: Build UxPlay and bundle the receiver
         shell: msys2 {0}
         run: |
-          cmake -S build/UxPlay -B build/UxPlay/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S build/UxPlay -B build/UxPlay/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNO_MARCH_NATIVE=ON
           ninja -C build/UxPlay/build
+          # Must run on any x86-64 PC: no AVX/AVX2/AVX-512 code from the build machine's CPU.
+          wide=$(objdump -d build/UxPlay/build/uxplay.exe | grep -cE '%[yz]mm' || true)
+          echo "AVX instructions in uxplay.exe: $wide"
+          test "$wide" -eq 0
           bash packaging/bundle_receiver.sh build/UxPlay/build/uxplay.exe dist-receiver
 
       - name: Python packages
