@@ -8,3 +8,4 @@ selftest-*
 tests/host/harness
 tests/host/harness.exe
 firmware/.pio/
+rust/target/

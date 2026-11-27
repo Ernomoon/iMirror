@@ -14,7 +14,7 @@ function demoBackend() {
   const st = {
     platform: "demo", phase,
     cfg: { preset: "max4k", width: 3840, height: 2160, refresh: 120, max_fps: 120, h265: true, low_latency: true, audio: true,
-      always_on_top: false, auto_fit: true, software_decode: false, server_name: "iMirror", pin: "", video_sink: "d3d12videosink",
+      always_on_top: false, phone_frame: true, auto_fit: true, software_decode: false, server_name: "iMirror", pin: "", video_sink: "d3d12videosink",
       forced_ip: "", wifi_boost: true, reduce_motion: false, autostart: true },
     presets: { max4k: {}, "1440p": {}, "1080p": {}, custom: {} }, sinks: ["d3d12videosink", "d3d11videosink", "autovideosink"],
     receiver: { running: phase !== "off", connections: live ? 1 : 0, codec: live ? "h265" : "", width: live ? 1179 : 0, height: live ? 2556 : 0,
@@ -130,6 +130,7 @@ function push(s) {
   bind("cta", ph === "problem" && !s.receiver.running ? "Включить снова" : T.cta);
   $("#cta").classList.toggle("stop", s.receiver.running);
   renderFault(fault);
+  if (s.about) bind("version", s.about.version);
   renderControl(s);
   const r = s.receiver;
   bind("name", s.cfg.server_name || "iMirror");
@@ -419,6 +420,8 @@ document.addEventListener("DOMContentLoaded", () => {
   $$("[data-ctl]").forEach((b) => b.addEventListener("click", (e) => { ripple(e); FX.pulse(e.clientX, e.clientY);
     call("control", b.dataset.key ? { op: b.dataset.ctl, key: b.dataset.key } : { op: b.dataset.ctl }); }));
   $("#typeBtn").addEventListener("click", (e) => { ripple(e); const t = $("#typeText").value; if (t.trim()) call("control", { op: "type", text: t }); });
+  $$("[data-url]").forEach((el) => el.addEventListener("click", (e) => { e.preventDefault(); ripple(e);
+    if (api && api.open_url) api.open_url(el.dataset.url); else window.open(el.dataset.url, "_blank"); }));
   const glow = $(".cursor-glow");
   document.addEventListener("pointermove", (e) => { glow.style.translate = `${e.clientX}px ${e.clientY}px`; });
   for (const el of $$("[data-cfg]")) {

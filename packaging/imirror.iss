@@ -8,9 +8,10 @@
 AppId={{6F3B8E2A-9C4D-4E71-B2A5-1D7C3F9E0A41}
 AppName=iMirror
 AppVersion={#AppVersion}
-AppVerName=iMirror {#AppVersion}
+AppVerName=iMirror {#AppVersion} by Ernomoon
+AppCopyright=Ernomoon, GPL-3.0
 AppPublisher=Ernomoon
-AppPublisherURL=https://github.com/Ernomoon/iMirror
+AppPublisherURL=https://t.me/Ernomoon
 AppSupportURL=https://github.com/Ernomoon/iMirror/issues
 DefaultDirName={autopf}\iMirror
 DefaultGroupName=iMirror
@@ -38,7 +39,11 @@ Name: "bonjour"; Description: "Установить Apple Bonjour (не обяз
 
 [Files]
 Source: "..\dist\iMirror\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "..\dist-receiver\*"; DestDir: "{app}\receiver"; Flags: recursesubdirs createallsubdirs ignoreversion
+
+[InstallDelete]
+; iMirror 4.x was a Python app: its runtime folder is not needed by the Rust build.
+Type: filesandordirs; Name: "{app}\_internal"
+Type: filesandordirs; Name: "{app}\receiver"
 
 [Icons]
 Name: "{group}\iMirror"; Filename: "{app}\iMirror.exe"

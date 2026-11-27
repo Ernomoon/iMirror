@@ -105,88 +105,37 @@ jobs:
           test "$wide" -eq 0
           bash packaging/bundle_receiver.sh build/UxPlay/build/uxplay.exe dist-receiver
 
-      - name: Python packages
-        run: |
-          python -m pip install -q --upgrade pip
-          python -m pip install -q -r app/requirements.txt pyinstaller
+      - name: Python packages (tests only)
+        run: python -m pip install -q zeroconf ifaddr
 
       - name: Receiver bundle works in isolation
         run: python packaging/verify_receiver.py dist-receiver
 
-      - name: Unit tests on Windows
-        run: python tests/test_all.py
-
-      - name: Discovery end-to-end on Windows - built-in Windows DNS-SD (like iPhoneMirror)
-        env:
-          IMIRROR_MDNS_METHOD: native
-        run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
-
-      - name: Discovery end-to-end on Windows - zeroconf fallback
-        env:
-          IMIRROR_MDNS_METHOD: zeroconf
-        run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
-
-      - name: Bluetooth control (WinRT HID over GATT) smoke test
-        run: python packaging/smoke_ble.py
-
-      - name: PyInstaller
-        run: pyinstaller --noconfirm --distpath dist --workpath build/pyi packaging/imirror.spec
-
-      - name: Self-test of the built app without Bonjour (starts receiver, must be announced)
-        env:
-          IMIRROR_SELFTEST_REQUIRE_MDNS: "1"
+      - name: Build the app (Rust)
+        working-directory: rust
         run: |
-          $env:APPDATA = "$PWD\appdata1"; $env:LOCALAPPDATA = "$PWD\appdata1"
-          New-Item -ItemType Directory -Force appdata1 | Out-Null
-          Copy-Item -Recurse dist-receiver dist/iMirror/receiver
-          $p = Start-Process dist/iMirror/iMirror.exe -ArgumentList "--selftest" -WorkingDirectory $PWD -PassThru
-          if (-not $p.WaitForExit(180000)) { Stop-Process $p -Force; throw "self-test timed out" }
-          Get-Content selftest-result.json
-          Get-Content appdata1\iMirror\imirror.log -Tail 40
-          if ($p.ExitCode -ne 0) { throw "self-test failed ($($p.ExitCode))" }
-          Remove-Item -Recurse dist/iMirror/receiver
+          cargo build --release
+          if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+          $exe = Get-Item target\release\imirror.exe
+          "imirror.exe: {0:N2} MB" -f ($exe.Length / 1MB)
 
-      - name: Install Apple Bonjour (the user's setup)
+      - name: Assemble the app folder
         run: |
-          Invoke-WebRequest -UseBasicParsing "https://download.info.apple.com/Mac_OS_X/061-8098.20100603.gthyu/BonjourPSSetup.exe" -OutFile BonjourPSSetup.exe
-          7z x BonjourPSSetup.exe -obonjour -y | Out-Null
-          Get-ChildItem bonjour | Format-Table Name, Length
-          $msi = (Get-ChildItem bonjour -Filter "Bonjour64.msi")[0].FullName
-          $i = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart /l*v bonjour-install.log" -PassThru -Wait
-          "msiexec exit: $($i.ExitCode)"
-          if ($i.ExitCode -ne 0 -and $i.ExitCode -ne 3010) { Get-Content bonjour-install.log -Tail 60; throw "Bonjour install failed" }
-          sc.exe query "Bonjour Service"
-          Test-Path "$env:SystemRoot\System32\dnssd.dll"
-          (Get-Command dns-sd -ErrorAction SilentlyContinue).Source
+          New-Item -ItemType Directory -Force dist\iMirror | Out-Null
+          Copy-Item rust\target\release\imirror.exe dist\iMirror\iMirror.exe
+          Copy-Item LICENSE dist\iMirror\LICENSE.txt
+          Copy-Item -Recurse dist-receiver dist\iMirror\receiver
+          "{0:N1} MB in the app folder" -f ((Get-ChildItem dist\iMirror -Recurse | Measure-Object Length -Sum).Sum / 1MB)
 
-      - name: Diagnostic - zeroconf while Bonjour owns port 5353
-        continue-on-error: true
-        timeout-minutes: 3
-        env:
-          IMIRROR_MDNS_METHOD: zeroconf
-        run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
-
-      - name: Discovery end-to-end with Bonjour installed (default order, as on the user's PC)
-        run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
-
-      - name: Discovery end-to-end via Bonjour fallback
-        env:
-          IMIRROR_MDNS_METHOD: bonjour
-        run: python tests/test_discovery.py dist-receiver/bin/uxplay.exe
-
-      - name: Self-test of the built app with Bonjour
-        env:
-          IMIRROR_SELFTEST_REQUIRE_MDNS: "1"
+      - name: Self-test of the built app (start, announce through Windows DNS-SD, visible to a browser)
         run: |
-          $env:APPDATA = "$PWD\appdata2"; $env:LOCALAPPDATA = "$PWD\appdata2"
-          New-Item -ItemType Directory -Force appdata2 | Out-Null
-          Copy-Item -Recurse dist-receiver dist/iMirror/receiver
-          $p = Start-Process dist/iMirror/iMirror.exe -ArgumentList "--selftest" -WorkingDirectory $PWD -PassThru
-          if (-not $p.WaitForExit(180000)) { Stop-Process $p -Force; throw "self-test timed out" }
-          Get-Content selftest-result.json
-          Get-Content appdata2\iMirror\imirror.log -Tail 40
-          if ($p.ExitCode -ne 0) { throw "self-test failed ($($p.ExitCode))" }
-          Remove-Item -Recurse dist/iMirror/receiver
+          $p = Start-Process dist\iMirror\iMirror.exe -ArgumentList "--selftest" -PassThru
+          python tests/browse.py 60
+          $browse = $LASTEXITCODE
+          if (-not $p.WaitForExit(90000)) { Stop-Process $p -Force; throw "self-test timed out" }
+          Get-Content "$env:LOCALAPPDATA\iMirror\selftest-result.json"
+          if ($p.ExitCode -ne 0) { throw "self-test failed" }
+          if ($browse -ne 0) { throw "the receiver was not visible on the network" }
 
       - name: Installer (Inno Setup)
         run: |
@@ -206,27 +155,22 @@ jobs:
             if (-not (Test-Path "$app\$f")) { throw "missing after install: $f" }
           }
           netsh advfirewall firewall show rule name="iMirror AirPlay" | Select-String "Enabled|Program"
-          New-Item -ItemType Directory -Force installed-test | Out-Null
-          $p = Start-Process "$app\iMirror.exe" -ArgumentList "--selftest" -WorkingDirectory "$PWD\installed-test" -PassThru
-          if (-not $p.WaitForExit(150000)) { Stop-Process $p -Force; throw "installed self-test timed out" }
-          Get-Content installed-test\selftest-result.json
+          $p = Start-Process "$app\iMirror.exe" -ArgumentList "--selftest" -PassThru
+          if (-not $p.WaitForExit(120000)) { Stop-Process $p -Force; throw "installed self-test timed out" }
+          Get-Content "$env:LOCALAPPDATA\iMirror\selftest-result.json"
           if ($p.ExitCode -ne 0) { throw "installed self-test failed" }
 
       - name: Collect app logs
         if: always()
         run: |
           New-Item -ItemType Directory -Force applogs | Out-Null
-          Copy-Item "$env:LOCALAPPDATA\iMirror\*.log", "$env:LOCALAPPDATA\iMirror\stacks.txt", "appdata1\iMirror\*", "appdata2\iMirror\*" applogs -ErrorAction SilentlyContinue
+          Copy-Item "$env:LOCALAPPDATA\iMirror\*.log", "$env:LOCALAPPDATA\iMirror\*.json" applogs -ErrorAction SilentlyContinue
           Get-ChildItem applogs | ForEach-Object { "== $($_.Name)"; Get-Content $_.FullName -Tail 80 }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: selftest
-          path: |
-            selftest-result.json
-            selftest-ui.png
-            installed-test/
-            applogs/
+          path: applogs/
       - uses: actions/upload-artifact@v4
         with:
           name: uxplay-symbols

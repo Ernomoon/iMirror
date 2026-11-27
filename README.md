@@ -1,5 +1,8 @@
 # iMirror
 
+Создатель: **Ernomoon** · Telegram-канал: [t.me/Ernomoon](https://t.me/Ernomoon)
+
+
 Экран iPhone на компьютере с Windows через AirPlay («Повтор экрана») в максимальном качестве, которое отдаёт iPhone.
 
 ## Установка
