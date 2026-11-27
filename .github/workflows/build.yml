@@ -156,7 +156,7 @@ jobs:
           }
           netsh advfirewall firewall show rule name="iMirror AirPlay" | Select-String "Enabled|Program"
           $p = Start-Process "$app\iMirror.exe" -ArgumentList "--selftest" -PassThru
-          if (-not $p.WaitForExit(120000)) { Stop-Process $p -Force; throw "installed self-test timed out" }
+          if (-not $p.WaitForExit(150000)) { Stop-Process $p -Force; throw "installed self-test timed out" }
           Get-Content "$env:LOCALAPPDATA\iMirror\selftest-result.json"
           if ($p.ExitCode -ne 0) { throw "installed self-test failed" }
 

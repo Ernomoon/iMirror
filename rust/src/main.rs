@@ -78,6 +78,11 @@ fn selftest() -> i32 {
         std::thread::sleep(Duration::from_millis(500));
         if core.state()["mdns"]["ok"] == json!(true) { ok = true; break; }
     }
+    if ok {
+        // stay reachable so the CI browser (and GET /info) can verify it from outside
+        let secs: u64 = std::env::var("IMIRROR_SELFTEST_HOLD").ok().and_then(|v| v.parse().ok()).unwrap_or(30);
+        std::thread::sleep(Duration::from_secs(secs));
+    }
     let st = core.state();
     let res = json!({"ok": ok, "phase": st["phase"], "mdns": st["mdns"], "checks": st["checks"], "log": st["log"]});
     let _ = std::fs::write(util::data_dir().join("selftest-result.json"), serde_json::to_vec_pretty(&res).unwrap());
