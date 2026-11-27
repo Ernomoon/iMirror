@@ -88,6 +88,9 @@ def build_args(cfg: dict, exe: str) -> list[str]:
     if ports:
         tcp, udp = ports
         args += ["-p", "tcp", ",".join(map(str, tcp)), "-p", "udp", ",".join(map(str, udp))]
+    if cfg.get("_minimal"):
+        # Plain UxPlay defaults: nothing that could trip a particular PC.
+        return args + ["-as", "0", "-vs", "autovideosink"]
     args += ["-s", f"{w}x{h}@{r}", "-fps", str(fps), "-nohold", "-nofreeze", "-vp", H264_PARSER]
     if cfg.get("h265"):
         args.append("-h265")
@@ -136,7 +139,22 @@ def receiver_env(exe: str) -> dict:
             env["GST_PLUGIN_SCANNER"] = str(scanner)
         cache = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "iMirror"
         cache.mkdir(parents=True, exist_ok=True)
-        env["GST_REGISTRY_1_0"] = str(cache / "gst-registry.bin")
+        # One plugin cache per receiver build: a cache written by another GStreamer (e.g. an old
+        # MSYS2 UxPlay) made the bundled one load foreign plugins and crash at start-up.
+        try:
+            st = Path(exe).stat()
+            tag = f"{st.st_size:x}-{int(st.st_mtime):x}"
+        except OSError:
+            tag = "x"
+        reg = cache / f"gst-registry-{tag}.bin"
+        for old in cache.glob("gst-registry*.bin"):
+            if old != reg:
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+        env["GST_REGISTRY_1_0"] = str(reg)
+        env["GST_REGISTRY_FORK"] = "yes"
     else:
         msys_bin = str(Path(os.environ.get("IMIRROR_MSYS", r"C:\msys64")) / "ucrt64" / "bin")
         env["PATH"] = os.pathsep.join([str(bindir), msys_bin, env.get("PATH", "")])

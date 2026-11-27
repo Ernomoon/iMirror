@@ -172,10 +172,9 @@ class Core:
         self._safe_mode = bool(safe)
         self.mdns = {"ok": None, "addresses": [], "error": "", "method": ""}
         cfg = dict(self.cfg)
-        if safe:       # the most compatible pipeline: no audio, generic sink, 1080p H.264
-            cfg.update(audio=False, video_sink="autovideosink", h265=False, width=1920, height=1080,
-                       software_decode=True)
-            self.logln("Безопасный режим: 1080p H.264, без звука, программное декодирование")
+        if safe:       # the most compatible start: UxPlay defaults, no audio, generic sink
+            cfg.update(audio=False, video_sink="autovideosink", h265=False, _minimal=True)
+            self.logln("Безопасный режим: настройки UxPlay по умолчанию, без звука")
         self.receiver.start(cfg)
         if cfg.get("device_id") != self.cfg.get("device_id"):
             self.cfg["device_id"] = cfg["device_id"]
@@ -357,7 +356,10 @@ class Core:
                 tail = self._tail()
                 log.info("receiver exited with code %s (requested=%s); last output:\n%s",
                          code, self.receiver.stopping, "\n".join(tail))
-                if not self.receiver.stopping:
+                if not self.receiver.stopping and not self._safe_mode and self.receiver.stage == "":
+                    self.logln(f"Приёмник упал при запуске (код {code}), пробую безопасный режим")
+                    threading.Timer(1.0, lambda: self.act_start(safe=True)).start()
+                elif not self.receiver.stopping:
                     hint = _exit_hint(code, tail)
                     self.fault = {"title": "Приёмник AirPlay остановился",
                                   "detail": f"{hint} (код {code}).", "tail": tail, "action": "start"}
@@ -414,6 +416,8 @@ def _exit_hint(code: str, tail: list) -> str:
         return "порт занят другой программой AirPlay (AirServer, LonelyScreen?) — закройте её"
     if "no element" in text or "could not" in text and "sink" in text:
         return "не хватает модуля видео, попробуйте безопасный режим"
+    if code in ("3221225501", "-1073741795"):
+        return "приёмник упал (недопустимая инструкция процессора)"
     if code in ("3221225477", "-1073741819"):
         return "сбой приёмника (ошибка доступа к памяти)"
     if code in ("3221225781", "-1073741515"):
