@@ -71,7 +71,8 @@ class TestNetif(unittest.TestCase):
         vpn = I(9, "AmneziaWG", "AmneziaWG Tunnel", netif.IF_TYPE_ETHERNET, [("10.8.1.2", 32)], True, 5)
         veth = I(7, "vEthernet (WSL)", "Hyper-V Virtual Ethernet Adapter", netif.IF_TYPE_ETHERNET, [("172.20.0.1", 20)], False, 15)
         self.assertIs(netif.best_interface([vpn, veth, wifi]), wifi)
-        self.assertIs(netif.best_interface([vpn, veth, wifi], "172.20.0.1"), veth)
+        self.assertIs(netif.best_interface([vpn, veth, wifi], "172.20.0.1"), wifi)   # never a virtual one
+        self.assertIs(netif.best_interface([vpn, veth], "172.20.0.1"), veth)
 
 
 class TestMdns(unittest.TestCase):

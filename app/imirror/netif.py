@@ -140,7 +140,12 @@ def interfaces() -> list[Iface]:
 
 def best_interface(ifaces: list[Iface], requested_ip: str = "") -> Iface | None:
     """Same preference order as iPhoneMirror: requested > non-virtual > physical > gateway > metric."""
-    cands = [i for i in ifaces if i.ips and i.multicast and i.if_type not in (IF_TYPE_TUNNEL, IF_TYPE_LOOPBACK)]
+    cands = [i for i in ifaces if i.ips and i.if_type not in (IF_TYPE_TUNNEL, IF_TYPE_LOOPBACK)]
+    lan = [i for i in cands if i.lan]
+    if lan:
+        # A VPN/TUN adapter is never chosen while a real Wi-Fi/Ethernet exists, even if it was
+        # requested: the iPhone can only reach the PC over the local network.
+        cands = lan
     if not cands:
         return None
 

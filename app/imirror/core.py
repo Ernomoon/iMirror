@@ -38,7 +38,11 @@ class Core:
         self._toast_id = 0
 
         self.advertiser = Advertiser(self._event_mdns)
-        self.advertiser.forced_ip = self.cfg.get("forced_ip", "")
+        fip = self.cfg.get("forced_ip", "")
+        if fip and not any(a.ip == fip and not a.virtual for a in list_adapters()):
+            log.info("dropping forced adapter %s (virtual or gone)", fip)
+            fip = self.cfg["forced_ip"] = ""
+        self.advertiser.forced_ip = fip
         self.mdns = {"ok": None, "addresses": [], "error": "", "method": ""}
         self.receiver = Receiver(lambda k, v: self._event(k, v), line_hook=self.advertiser.feed)
         self.wifi = netdiag.WifiStreaming()

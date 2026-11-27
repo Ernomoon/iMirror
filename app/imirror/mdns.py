@@ -400,7 +400,10 @@ class Advertiser:
             from . import netif
             if method in ("", "native") and netif.WinDnsSd.available():
                 try:
-                    best = netif.best_interface(netif.interfaces(), self.forced_ip)
+                    ifs = netif.interfaces()
+                    log.info("interfaces: %s", [(i.index, i.name, i.if_type, i.ips, i.lan, i.multicast, i.gateway, i.metric)
+                                                for i in ifs])
+                    best = netif.best_interface(ifs, self.forced_ip)
                     if best is not None:
                         n = netif.WinDnsSd()
                         ok, msg = n.register(specs, best.index)
