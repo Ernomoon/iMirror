@@ -182,18 +182,26 @@ def output_log_path() -> Path:
     return base / f"uxplay-output-{os.getpid()}.log"
 
 
+def _is_imirror_build(p: Path) -> bool:
+    """Only UxPlay built with iMirror's patch can work with iMirror (external mDNS, stats)."""
+    try:
+        return b"IMIRROR_MDNS" in p.read_bytes()
+    except OSError:
+        return False
+
+
 def find_uxplay(cfg: dict) -> str | None:
-    candidates = []
+    """The receiver bundled with iMirror always wins. An old UxPlay elsewhere (for example the
+    one iMirror 1.x built in MSYS2) lacks the patch and would never announce itself."""
+    here = Path(__file__).resolve().parent.parent.parent
+    candidates = [bundle_root() / "bin" / "uxplay.exe", here / "receiver" / "bin" / "uxplay.exe"]
     if cfg.get("uxplay_path"):
         candidates.append(Path(cfg["uxplay_path"]))
-    here = Path(__file__).resolve().parent.parent.parent
-    candidates += [
-        bundle_root() / "bin" / "uxplay.exe",
-        here / "receiver" / "bin" / "uxplay.exe",
-        Path(os.environ.get("IMIRROR_MSYS", r"C:\msys64")) / "ucrt64" / "bin" / "uxplay.exe",
-    ]
+    candidates.append(Path(os.environ.get("IMIRROR_MSYS", r"C:\msys64")) / "ucrt64" / "bin" / "uxplay.exe")
+    if sys.platform != "win32":
+        candidates.append(Path("/usr/local/bin/uxplay"))
     for c in candidates:
-        if c.is_file():
+        if c.is_file() and _is_imirror_build(c):
             return str(c)
     return None
 
@@ -299,7 +307,7 @@ class Receiver:
         self.stopping = False
         import time as _t
         self.started_at = _t.monotonic()
-        self.on_event("log", "Запуск: " + " ".join(args[1:]))
+        self.on_event("log", f"Запуск {exe}: " + " ".join(args[1:]))
         # Output goes to a file that iMirror tails, not to a pipe: on some PCs UxPlay stops
         # dead on its first write after the network sockets open when stdout is a pipe from
         # iMirror, while the same binary runs fine with a file (verified on the user's PC).

@@ -97,6 +97,18 @@ class TestMdns(unittest.TestCase):
             self.assertIsNone(mdns.Bonjour.load())
 
 
+class TestFindUxplay(unittest.TestCase):
+    def test_skips_unpatched(self):
+        from imirror.receiver import find_uxplay
+        d = Path(tempfile.mkdtemp())
+        old = d / "old.exe"
+        old.write_bytes(b"MZ plain uxplay")
+        new = d / "new.exe"
+        new.write_bytes(b"MZ ... IMIRROR_MDNS ...")
+        self.assertNotEqual(find_uxplay({"uxplay_path": str(old)}), str(old))
+        self.assertEqual(find_uxplay({"uxplay_path": str(new)}), str(new))
+
+
 class TestReceiverProcess(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "uses a POSIX shell script as fake uxplay")
     def test_runs_and_parses_output(self):
