@@ -90,8 +90,17 @@ fn selftest() -> i32 {
     if ok { 0 } else { 1 }
 }
 
+fn fatal(msg: &str) -> ! {
+    use windows::core::HSTRING;
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+    log!("FATAL: {msg}");
+    unsafe { MessageBoxW(None, &HSTRING::from(format!("iMirror не смог запуститься:\n\n{msg}\n\nЖурнал: %LOCALAPPDATA%\\iMirror\\imirror.log")), &HSTRING::from("iMirror"), MB_OK | MB_ICONERROR); }
+    std::process::exit(1);
+}
+
 fn main() {
     util::log_init();
+    std::panic::set_hook(Box::new(|info| { log!("PANIC: {info}"); }));
     log!("iMirror {} start {:?}", env!("CARGO_PKG_VERSION"), std::env::args().collect::<Vec<_>>());
     if std::env::args().any(|a| a == "--selftest") { std::process::exit(selftest()); }
     if !single_instance() { return; }
@@ -107,6 +116,7 @@ fn main() {
     });
     let d3 = dirty.clone();
     let core = core::Core::new(Arc::new(move || d3.store(true, Ordering::SeqCst)));
+    log!("core ready");
     {
         let d4 = dirty.clone();
         *core.ctl.lock().unwrap() = Some(control::Control::new(Arc::new(move || d4.store(true, Ordering::SeqCst))));
@@ -142,13 +152,16 @@ fn main() {
         .with_visible(false)
         .with_window_icon(icon)
         .build(&event_loop)
-        .expect("window");
+        .unwrap_or_else(|e| fatal(&format!("окно: {e}")));
     let window = Arc::new(window);
 
     let cc = core.clone();
     let pr = proxy.clone();
     let w2 = window.clone();
-    let webview = WebViewBuilder::new()
+    // WebView2 keeps its profile in a writable folder (the default, next to the exe in
+    // Program Files, is read-only for a normal user and WebView2 refuses to start).
+    let mut web_ctx = wry::WebContext::new(Some(util::data_dir().join("WebView2")));
+    let webview = WebViewBuilder::new_with_web_context(&mut web_ctx)
         .with_initialization_script(SHIM)
         .with_background_color((10, 10, 14, 255))
         .with_custom_protocol("imirror".into(), move |_id, req| {
@@ -188,7 +201,8 @@ fn main() {
             });
         })
         .build(&*window)
-        .expect("webview");
+        .unwrap_or_else(|e| fatal(&format!("WebView2: {e}. Установите Microsoft Edge WebView2 Runtime: https://go.microsoft.com/fwlink/p/?LinkId=2124703")));
+    log!("UI ready");
 
     // show even if the page never says it is ready
     let p3 = proxy.clone();

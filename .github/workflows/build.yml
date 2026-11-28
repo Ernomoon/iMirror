@@ -160,6 +160,15 @@ jobs:
           Get-Content "$env:LOCALAPPDATA\iMirror\selftest-result.json"
           if ($p.ExitCode -ne 0) { throw "installed self-test failed" }
 
+      - name: The installed app opens its window (UI smoke test)
+        run: |
+          $p = Start-Process "$env:ProgramFiles\iMirror\iMirror.exe" -PassThru
+          Start-Sleep 12
+          $log = Get-Content "$env:LOCALAPPDATA\iMirror\imirror.log" -Raw
+          if (-not $p.HasExited) { Stop-Process $p -Force }
+          if ($log -notmatch "UI ready") { $log | Select-Object -Last 40; throw "the UI did not start" }
+          if ($log -match "PANIC|FATAL") { throw "panic in the app" }
+
       - name: Collect app logs
         if: always()
         run: |
